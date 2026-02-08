@@ -1,6 +1,8 @@
 mod lexer;
-
 use lexer::tokenize;
+
+mod parser;
+use parser::Parser;
 
 const NUM_REGISTERS: usize = 32;
 
@@ -50,13 +52,15 @@ impl Assembler {
     fn assemble(&mut self, assembler: &str) -> Vec<Instruction> {
         // TODO implement tokenize lexer ISA etc
         let tokens = tokenize(assembler);
-        for token in tokens {
+        for token in &tokens {
             println!("Token: {:?}", token);
             self.code.push(Instruction {
                 asm: assembler.to_string(),
                 machine_code: 0,
             });
         }
+        let mut parser = Parser::new(tokens);
+        parser.parse();
         // Dummy implementation for illustration
         self.code.clone()
     }
