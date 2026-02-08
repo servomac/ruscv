@@ -47,10 +47,6 @@ impl Assembler {
         Assembler { code: Vec::new() }
     }
 
-    fn lexer(&self, source: &str) -> Vec<String> {
-        source.split_whitespace().map(|s| s.to_string()).collect()
-    }
-
     fn assemble(&mut self, assembler: &str) -> Vec<Instruction> {
         // TODO implement tokenize lexer ISA etc
         let tokens = tokenize(assembler);

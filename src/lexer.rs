@@ -19,10 +19,12 @@ enum Token {
     LParenthesis,
     RParenthesis,
     Newline,
-    EOF,
+    Eof,
 }
 
 pub fn tokenize(source: &str) -> Vec<SpannedToken> {
+    // TODO return Result<Vec<SpannedToken>, LexError> instead of panicking on errors
+    // TODO handle tabs and other whitespace correctly for column counting
     let mut tokens = Vec::new();
     let mut line = 1;
     let mut column = 1;
@@ -103,6 +105,8 @@ pub fn tokenize(source: &str) -> Vec<SpannedToken> {
                 });
             }
             '"' => {
+                // TODO extract to read_string_literal function
+                // TODO column is the end of the string, not the start, fix it
                 let mut string_literal = String::new();
                 while let Some(next_char) = chars.next() {
                     column += 1;
@@ -175,7 +179,7 @@ pub fn tokenize(source: &str) -> Vec<SpannedToken> {
     }
 
     tokens.push(SpannedToken {
-        token: Token::EOF,
+        token: Token::Eof,
         line,
         column,
     });
@@ -210,7 +214,7 @@ mod tests {
         let source = "add x2, x0, x3\nsub x4, x5, x6";
         let tokens = tokenize(source);
 
-        assert_eq!(tokens.len(), 14); // 13 tokens + EOF
+        assert_eq!(tokens.len(), 14); // 13 tokens + Eof
 
         assert_eq!(tokens[0].token, Token::Instruction("add".to_string()));
         assert_eq!(tokens[1].token, Token::Register("x2".to_string()));
@@ -225,7 +229,7 @@ mod tests {
         assert_eq!(tokens[10].token, Token::Register("x5".to_string()));
         assert_eq!(tokens[11].token, Token::Comma);
         assert_eq!(tokens[12].token, Token::Register("x6".to_string()));
-        assert_eq!(tokens[13].token, Token::EOF);
+        assert_eq!(tokens[13].token, Token::Eof);
     }
 
     #[test]
@@ -233,7 +237,7 @@ mod tests {
         let source = "loop: add x1, x1, x2 # This is a comment\n";
         let tokens = tokenize(source);
 
-        assert_eq!(tokens.len(), 10); // 9 tokens + EOF
+        assert_eq!(tokens.len(), 10); // 9 tokens + Eof
 
         assert_eq!(tokens[0].token, Token::Label("loop".to_string()));
         assert_eq!(tokens[1].token, Token::Colon);
@@ -244,14 +248,14 @@ mod tests {
         assert_eq!(tokens[6].token, Token::Comma);
         assert_eq!(tokens[7].token, Token::Register("x2".to_string()));
         assert_eq!(tokens[8].token, Token::Newline);
-        assert_eq!(tokens[9].token, Token::EOF);
+        assert_eq!(tokens[9].token, Token::Eof);
     }
 
     #[test]
     fn test_directives() {
         let source = ".text\n.align 2\n.global main";
         let tokens = tokenize(source);
-        assert_eq!(tokens.len(), 8); // 7 tokens + EOF
+        assert_eq!(tokens.len(), 8); // 7 tokens + Eof
         assert_eq!(tokens[0].token, Token::Directive(".text".to_string()));
         assert_eq!(tokens[1].token, Token::Newline);
         assert_eq!(tokens[2].token, Token::Directive(".align".to_string()));
@@ -259,17 +263,29 @@ mod tests {
         assert_eq!(tokens[4].token, Token::Newline);
         assert_eq!(tokens[5].token, Token::Directive(".global".to_string()));
         assert_eq!(tokens[6].token, Token::Label("main".to_string()));
-        assert_eq!(tokens[7].token, Token::EOF);
+        assert_eq!(tokens[7].token, Token::Eof);
     }
 
     #[test]
     fn test_strings() {
         let source = r#".string "Hello, %s!\n""#;
         let tokens = tokenize(source);
-        assert_eq!(tokens.len(), 3); // 2 tokens + EOF
+        assert_eq!(tokens.len(), 3); // 2 tokens + Eof
         assert_eq!(tokens[0].token, Token::Directive(".string".to_string()));
         assert_eq!(tokens[1].token, Token::StringLiteral("Hello, %s!\n".to_string()));
     }
 
-    // TODO example: jump to label
+    #[test]
+    fn test_immediate_negative_numbers() {
+        let source = "addi sp, sp, -16";
+        let tokens = tokenize(source);
+        assert_eq!(tokens.len(), 7); // 6 tokens + Eof
+        assert_eq!(tokens[0].token, Token::Instruction("addi".to_string()));
+        assert_eq!(tokens[1].token, Token::Register("sp".to_string()));
+        assert_eq!(tokens[2].token, Token::Comma);
+        assert_eq!(tokens[3].token, Token::Register("sp".to_string()));
+        assert_eq!(tokens[4].token, Token::Comma);
+        assert_eq!(tokens[5].token, Token::Immediate(-16));
+    }
+    // TODO test lines and columns in SpannedToken
 }
