@@ -11,6 +11,7 @@ enum Token {
     Instruction(String),
     Register(String),
     Immediate(i32),
+    StringLiteral(String),
     Label(String),
     Colon,
     Directive(String),
@@ -97,6 +98,36 @@ pub fn tokenize(source: &str) -> Vec<SpannedToken> {
                 }
                 tokens.push(SpannedToken {
                     token: Token::Directive(directive),
+                    line,
+                    column,
+                });
+            }
+            '"' => {
+                let mut string_literal = String::new();
+                while let Some(next_char) = chars.next() {
+                    column += 1;
+                    if next_char == '"' {
+                        break;
+                    }
+                    if next_char == '\\' {
+                        if let Some(escaped_char) = chars.next() {
+                            column += 1;
+                            match escaped_char {
+                                'n' => string_literal.push('\n'),
+                                't' => string_literal.push('\t'),
+                                '\\' => string_literal.push('\\'),
+                                '"' => string_literal.push('"'),
+                                _ => panic!("Unknown escape sequence \\{}", escaped_char),
+                            }
+                        } else {
+                            panic!("Unterminated string literal at line {}, column {}", line, column);
+                        }
+                    } else {
+                        string_literal.push(next_char);
+                    }
+                }
+                tokens.push(SpannedToken {
+                    token: Token::StringLiteral(string_literal),
                     line,
                     column,
                 });
@@ -231,6 +262,14 @@ mod tests {
         assert_eq!(tokens[7].token, Token::EOF);
     }
 
-    // TODO strings
+    #[test]
+    fn test_strings() {
+        let source = r#".string "Hello, %s!\n""#;
+        let tokens = tokenize(source);
+        assert_eq!(tokens.len(), 3); // 2 tokens + EOF
+        assert_eq!(tokens[0].token, Token::Directive(".string".to_string()));
+        assert_eq!(tokens[1].token, Token::StringLiteral("Hello, %s!\n".to_string()));
+    }
+
     // TODO example: jump to label
 }
