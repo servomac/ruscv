@@ -60,7 +60,7 @@ impl Assembler {
             });
         }
         let mut parser = Parser::new(tokens);
-        parser.parse();
+        let _ = parser.parse();
         // Dummy implementation for illustration
         self.code.clone()
     }

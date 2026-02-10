@@ -1,13 +1,13 @@
 
 #[derive(Debug)]
 pub struct SpannedToken {
-    token: Token,
-    line: usize,
+    pub token: Token,
+    pub line: usize,
     column: usize,
 }
 
-#[derive(Debug, PartialEq)]
-enum Token {
+#[derive(Debug, PartialEq, Clone)]
+pub enum Token {
     Instruction(String),
     Register(String),
     Immediate(i32),
