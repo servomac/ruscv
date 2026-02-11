@@ -1,3 +1,5 @@
+use std::mem::discriminant;
+
 use crate::lexer::{SpannedToken, Token};
 
 #[derive(Debug, PartialEq)]
@@ -32,7 +34,7 @@ impl Parser {
     // Checks if the current token matches the expected token
     fn check(&self, expected: &Token) -> bool {
         if self.is_at_end() { return false; }
-        self.peek() == expected
+        discriminant(self.peek()) == discriminant(expected)
     }
 
     // Advances the position and returns the current token
@@ -91,6 +93,7 @@ impl Parser {
             Token::Label(label) => {
                 let label_name = label.clone();
                 self.advance();
+                self.consume(&Token::Colon, "A colon is expected after a label (':')")?;
                 Statement::Label(label_name)
             },
 
@@ -176,7 +179,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_rinstruction_parsing() {
+    fn test_r_instruction_parsing() {
         let tokens = tokenize("add x1, x2, x3");
         let mut parser = Parser::new(tokens);
         let nodes = parser.parse().unwrap();
@@ -187,4 +190,45 @@ mod tests {
             Operand::Register("x3".to_string()),
         ]));
     }
+
+    #[test]
+    fn test_i_instruction_parsing() {
+        let tokens = tokenize("addi x1, x2, 10");
+        let mut parser = Parser::new(tokens);
+        let nodes = parser.parse().unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0], Statement::Instruction("addi".to_string(), vec![
+            Operand::Register("x1".to_string()),
+            Operand::Register("x2".to_string()),
+            Operand::Immediate(10),
+        ]));
+    }
+
+    #[test]
+    fn test_s_instruction_parsing() {
+        let tokens = tokenize("sw x1, 0(x2)");
+        let mut parser = Parser::new(tokens);
+        let nodes = parser.parse().unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0], Statement::Instruction("sw".to_string(), vec![
+            Operand::Register("x1".to_string()),
+            Operand::Memory { offset: 0, base_reg: "x2".to_string() },
+        ]));
+    }
+
+    #[test]
+    fn test_label_parsing() {
+        let tokens = tokenize("loop:\nadd x1, x2, x3");
+        println!("{:#?}", tokens);
+        let mut parser = Parser::new(tokens);
+        let nodes = parser.parse().unwrap();
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes[0], Statement::Label("loop".to_string()));
+        assert_eq!(nodes[1], Statement::Instruction("add".to_string(), vec![
+            Operand::Register("x1".to_string()),
+            Operand::Register("x2".to_string()),
+            Operand::Register("x3".to_string()),
+        ]));
+    }
+
 }
