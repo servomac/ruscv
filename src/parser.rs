@@ -14,6 +14,7 @@ enum Operand {
 pub enum Statement {
     Instruction(String, Vec<Operand>),
     Label(String),
+    Directive(String, Vec<Operand>),
 }
 
 pub struct Parser {
@@ -111,6 +112,22 @@ impl Parser {
                 }
                 Statement::Instruction(mnemonic, operands)
             },
+
+            Token::Directive(directive) => {
+                self.advance();
+                let mut operands = Vec::new();
+
+                if !self.check(&Token::Newline) && !self.is_at_end() {
+                    operands.push(self.parse_operand()?);
+
+                    while self.check(&Token::Comma) {
+                        self.advance(); // consume the comma
+                        operands.push(self.parse_operand()?);
+                    }
+                }
+                Statement::Directive(directive, operands)
+            },
+
             Token::Newline => {
                 self.advance();
                 return Ok(None);
@@ -228,6 +245,19 @@ mod tests {
             Operand::Register("x1".to_string()),
             Operand::Register("x2".to_string()),
             Operand::Register("x3".to_string()),
+        ]));
+    }
+
+    #[test]
+    fn test_directive_parsing() {
+        let tokens = tokenize(".data\nmyVar: .word 42");
+        let mut parser = Parser::new(tokens);
+        let nodes = parser.parse().unwrap();
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(nodes[0], Statement::Directive(".data".to_string(), vec![]));
+        assert_eq!(nodes[1], Statement::Label("myVar".to_string()));
+        assert_eq!(nodes[2], Statement::Directive(".word".to_string(), vec![
+            Operand::Immediate(42),
         ]));
     }
 
