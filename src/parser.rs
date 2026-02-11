@@ -7,6 +7,7 @@ enum Operand {
     Register(u8),
     Immediate(i32),
     Label(String),
+    StringLiteral(String),
     Memory { offset: i32, reg: u8 },
 }
 
@@ -118,11 +119,11 @@ impl Parser {
                 let mut operands = Vec::new();
 
                 if !self.check(&Token::Newline) && !self.is_at_end() {
-                    operands.push(self.parse_operand()?);
+                    operands.push(self.parse_directive_operand()?);
 
                     while self.check(&Token::Comma) {
                         self.advance(); // consume the comma
-                        operands.push(self.parse_operand()?);
+                        operands.push(self.parse_directive_operand()?);
                     }
                 }
                 Statement::Directive(directive, operands)
@@ -187,6 +188,17 @@ impl Parser {
         }
     }
 
+    fn parse_directive_operand(&mut self) -> Result<Operand, String> {
+        let token = self.peek().clone();
+
+        match token {
+            Token::StringLiteral(s) => {
+                self.advance();
+                Ok(Operand::StringLiteral(s))
+            },
+            _ => self.parse_operand(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -223,13 +235,13 @@ mod tests {
 
     #[test]
     fn test_s_instruction_parsing() {
-        let tokens = tokenize("sw x1, 0(x2)");
+        let tokens = tokenize("sw x1, 4(x2)");
         let mut parser = Parser::new(tokens);
         let nodes = parser.parse().unwrap();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0], Statement::Instruction("sw".to_string(), vec![
             Operand::Register(1),
-            Operand::Memory { offset: 0, reg: 2 },
+            Operand::Memory { offset: 4, reg: 2 },
         ]));
     }
 
@@ -261,4 +273,14 @@ mod tests {
         ]));
     }
 
+    #[test]
+    fn test_directive_with_string_parsing() {
+        let tokens = tokenize(".asciiz \"Hello, world!\"");
+        let mut parser = Parser::new(tokens);
+        let nodes = parser.parse().unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0], Statement::Directive(".asciiz".to_string(), vec![
+            Operand::StringLiteral("Hello, world!".to_string()),
+        ]));
+    }
 }
