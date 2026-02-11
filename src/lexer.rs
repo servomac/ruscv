@@ -188,7 +188,7 @@ pub fn tokenize(source: &str) -> Vec<SpannedToken> {
 }
 
 fn classify_identifier(ident: &str) -> Token {
-    // 1. Intentar parsear formato x0, x1... x31
+    // Lets search for registers first, since they can be confused with labels or instructions
     if ident.starts_with('x') && ident.len() > 1 {
         if let Ok(num) = ident[1..].parse::<u8>() {
             if num <= 31 {
@@ -197,12 +197,12 @@ fn classify_identifier(ident: &str) -> Token {
         }
     }
 
-    // 2. Intentar nombres ABI (sp, ra, a0...)
+    // Try to match the identifier with the ABI register names (like "zero", "ra", "sp", etc)
     if let Some(reg_num) = abi_to_register(ident) {
         return Token::Register(reg_num);
     }
 
-    // 3. Si no es registro, ¿es instrucción o etiqueta?
+    // If its not a register, it can be an instruction, a directive or a label
     match ident {
         "add" | "sub" | "and" | "or" | "xor" | "sll" | "srl" | "sra" | "slt" | "sltu" |
         "addi" | "andi" | "ori" | "xori" | "slli" | "srli" | "srai" | "slti" | "sltiu" |

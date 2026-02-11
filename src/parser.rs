@@ -3,7 +3,7 @@ use std::mem::discriminant;
 use crate::lexer::{SpannedToken, Token};
 
 #[derive(Debug, PartialEq)]
-enum Operand {
+pub enum Operand {
     Register(u8),
     Immediate(i32),
     Label(String),
@@ -283,4 +283,5 @@ mod tests {
             Operand::StringLiteral("Hello, world!".to_string()),
         ]));
     }
+
 }

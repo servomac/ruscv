@@ -4,6 +4,9 @@ use lexer::tokenize;
 mod parser;
 use parser::Parser;
 
+mod symbols;
+use symbols::SymbolTable;
+
 const NUM_REGISTERS: usize = 32;
 
 struct Processor {
@@ -60,7 +63,9 @@ impl Assembler {
             });
         }
         let mut parser = Parser::new(tokens);
-        let _ = parser.parse();
+        let statements = parser.parse().unwrap();
+        let mut symbol_table = SymbolTable::new();
+        let _ = symbol_table.build(&statements);
         // Dummy implementation for illustration
         self.code.clone()
     }
