@@ -4,10 +4,10 @@ use crate::lexer::{SpannedToken, Token};
 
 #[derive(Debug, PartialEq)]
 enum Operand {
-    Register(String),
+    Register(u8),
     Immediate(i32),
     Label(String),
-    Memory { offset: i32, base_reg: String },
+    Memory { offset: i32, reg: u8 },
 }
 
 #[derive(Debug, PartialEq)]
@@ -158,18 +158,18 @@ impl Parser {
 
                     // consume the register inside the parentheses
                     let reg_token = self.consume(
-                        &Token::Register(String::new()),
+                        &Token::Register(0),
                         "A register was expected inside parentheses for memory addressing"
                     )?;
 
-                    let base_reg = match reg_token {
+                    let reg = match reg_token {
                         Token::Register(r) => r,
                         _ => unreachable!(),
                     };
 
                     self.consume(&Token::RParenthesis, "Right parenthesis expected after base register")?;
 
-                    Ok(Operand::Memory { offset: imm, base_reg })
+                    Ok(Operand::Memory { offset: imm, reg })
                 } else {
                     Ok(Operand::Immediate(imm))
                 }
@@ -202,9 +202,9 @@ mod tests {
         let nodes = parser.parse().unwrap();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0], Statement::Instruction("add".to_string(), vec![
-            Operand::Register("x1".to_string()),
-            Operand::Register("x2".to_string()),
-            Operand::Register("x3".to_string()),
+            Operand::Register(1),
+            Operand::Register(2),
+            Operand::Register(3),
         ]));
     }
 
@@ -215,8 +215,8 @@ mod tests {
         let nodes = parser.parse().unwrap();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0], Statement::Instruction("addi".to_string(), vec![
-            Operand::Register("x1".to_string()),
-            Operand::Register("x2".to_string()),
+            Operand::Register(1),
+            Operand::Register(2),
             Operand::Immediate(10),
         ]));
     }
@@ -228,8 +228,8 @@ mod tests {
         let nodes = parser.parse().unwrap();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0], Statement::Instruction("sw".to_string(), vec![
-            Operand::Register("x1".to_string()),
-            Operand::Memory { offset: 0, base_reg: "x2".to_string() },
+            Operand::Register(1),
+            Operand::Memory { offset: 0, reg: 2 },
         ]));
     }
 
@@ -242,9 +242,9 @@ mod tests {
         assert_eq!(nodes.len(), 2);
         assert_eq!(nodes[0], Statement::Label("loop".to_string()));
         assert_eq!(nodes[1], Statement::Instruction("add".to_string(), vec![
-            Operand::Register("x1".to_string()),
-            Operand::Register("x2".to_string()),
-            Operand::Register("x3".to_string()),
+            Operand::Register(1),
+            Operand::Register(2),
+            Operand::Register(3),
         ]));
     }
 

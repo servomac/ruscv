@@ -9,7 +9,7 @@ pub struct SpannedToken {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
     Instruction(String),
-    Register(String),
+    Register(u8),
     Immediate(i32),
     StringLiteral(String),
     Label(String),
@@ -188,20 +188,53 @@ pub fn tokenize(source: &str) -> Vec<SpannedToken> {
 }
 
 fn classify_identifier(ident: &str) -> Token {
-    if ident.starts_with('x') && ident[1..].chars().all(|c| c.is_ascii_digit()) {
-        Token::Register(ident.to_string())
-    } else {
-        match ident {
-            "zero" | "ra" | "sp" | "gp" | "tp" | "fp" | "s0" | "s1" | "s2" | "s3" | "s4" | "s5" |
-            "s6" | "s7" | "s8" | "s9" | "s10" | "s11" | "a0" | "a1" | "a2" | "a3" | "a4" | "a5" |
-            "a6" | "a7" | "t0" | "t1" | "t2" | "t3" | "t4" | "t5" | "t6" => Token::Register(ident.to_string()),
-
-            "add" | "sub" | "and" | "or" | "xor" | "sll" | "srl" | "sra" | "slt" | "sltu" |
-            "addi" | "andi" | "ori" | "xori" | "slli" | "srli" | "srai" | "slti" | "sltiu" |
-            "lw" | "sw" | "beq" | "bne" | "blt" | "bge" | "jal" | "jalr" => Token::Instruction(ident.to_string()),
-
-            _ => Token::Label(ident.to_string()),
+    // 1. Intentar parsear formato x0, x1... x31
+    if ident.starts_with('x') && ident.len() > 1 {
+        if let Ok(num) = ident[1..].parse::<u8>() {
+            if num <= 31 {
+                return Token::Register(num);
+            }
         }
+    }
+
+    // 2. Intentar nombres ABI (sp, ra, a0...)
+    if let Some(reg_num) = abi_to_register(ident) {
+        return Token::Register(reg_num);
+    }
+
+    // 3. Si no es registro, ¿es instrucción o etiqueta?
+    match ident {
+        "add" | "sub" | "and" | "or" | "xor" | "sll" | "srl" | "sra" | "slt" | "sltu" |
+        "addi" | "andi" | "ori" | "xori" | "slli" | "srli" | "srai" | "slti" | "sltiu" |
+        "lw" | "sw" | "beq" | "bne" | "blt" | "bge" | "jal" | "jalr" => {
+            Token::Instruction(ident.to_string())
+        }
+        
+        // Si no es nada de lo anterior, es una etiqueta (label)
+        _ => Token::Label(ident.to_string()),
+    }
+}
+
+fn abi_to_register(ident: &str) -> Option<u8> {
+    match ident {
+        "zero" => Some(0),
+        "ra" => Some(1),
+        "sp" => Some(2),
+        "gp" => Some(3),
+        "tp" => Some(4),
+        "t0" => Some(5),
+        "t1" => Some(6),
+        "t2" => Some(7),
+        "s0" | "fp" => Some(8),
+        "s1" => Some(9),
+        "a0" => Some(10), "a1" => Some(11), "a2" => Some(12), "a3" => Some(13),
+        "a4" => Some(14), "a5" => Some(15), "a6" => Some(16), "a7" => Some(17),
+        "s2" => Some(18),
+        "s3" => Some(19),
+        "s4" => Some(20), "s5" => Some(21), "s6" => Some(22), "s7" => Some(23),
+        "s8" => Some(24), "s9" => Some(25), "s10" => Some(26), "s11" => Some(27),
+        "t3" => Some(28), "t4" => Some(29), "t5" => Some(30), "t6" => Some(31),
+        _ => None,
     }
 }
 
@@ -211,24 +244,24 @@ mod tests {
 
     #[test]
     fn test_tokenize() {
-        let source = "add x2, x0, x3\nsub x4, x5, x6";
+        let source = "add x2, zero, x3\nsub x4, x5, x6";
         let tokens = tokenize(source);
 
         assert_eq!(tokens.len(), 14); // 13 tokens + Eof
 
         assert_eq!(tokens[0].token, Token::Instruction("add".to_string()));
-        assert_eq!(tokens[1].token, Token::Register("x2".to_string()));
+        assert_eq!(tokens[1].token, Token::Register(2));
         assert_eq!(tokens[2].token, Token::Comma);
-        assert_eq!(tokens[3].token, Token::Register("x0".to_string()));
+        assert_eq!(tokens[3].token, Token::Register(0));
         assert_eq!(tokens[4].token, Token::Comma);
-        assert_eq!(tokens[5].token, Token::Register("x3".to_string()));
+        assert_eq!(tokens[5].token, Token::Register(3));
         assert_eq!(tokens[6].token, Token::Newline);
         assert_eq!(tokens[7].token, Token::Instruction("sub".to_string()));
-        assert_eq!(tokens[8].token, Token::Register("x4".to_string()));
+        assert_eq!(tokens[8].token, Token::Register(4));
         assert_eq!(tokens[9].token, Token::Comma);
-        assert_eq!(tokens[10].token, Token::Register("x5".to_string()));
+        assert_eq!(tokens[10].token, Token::Register(5));
         assert_eq!(tokens[11].token, Token::Comma);
-        assert_eq!(tokens[12].token, Token::Register("x6".to_string()));
+        assert_eq!(tokens[12].token, Token::Register(6));
         assert_eq!(tokens[13].token, Token::Eof);
     }
 
@@ -242,11 +275,11 @@ mod tests {
         assert_eq!(tokens[0].token, Token::Label("loop".to_string()));
         assert_eq!(tokens[1].token, Token::Colon);
         assert_eq!(tokens[2].token, Token::Instruction("add".to_string()));
-        assert_eq!(tokens[3].token, Token::Register("x1".to_string()));
+        assert_eq!(tokens[3].token, Token::Register(1));
         assert_eq!(tokens[4].token, Token::Comma);
-        assert_eq!(tokens[5].token, Token::Register("x1".to_string()));
+        assert_eq!(tokens[5].token, Token::Register(1));
         assert_eq!(tokens[6].token, Token::Comma);
-        assert_eq!(tokens[7].token, Token::Register("x2".to_string()));
+        assert_eq!(tokens[7].token, Token::Register(2));
         assert_eq!(tokens[8].token, Token::Newline);
         assert_eq!(tokens[9].token, Token::Eof);
     }
@@ -281,9 +314,9 @@ mod tests {
         let tokens = tokenize(source);
         assert_eq!(tokens.len(), 7); // 6 tokens + Eof
         assert_eq!(tokens[0].token, Token::Instruction("addi".to_string()));
-        assert_eq!(tokens[1].token, Token::Register("sp".to_string()));
+        assert_eq!(tokens[1].token, Token::Register(2));
         assert_eq!(tokens[2].token, Token::Comma);
-        assert_eq!(tokens[3].token, Token::Register("sp".to_string()));
+        assert_eq!(tokens[3].token, Token::Register(2));
         assert_eq!(tokens[4].token, Token::Comma);
         assert_eq!(tokens[5].token, Token::Immediate(-16));
     }
