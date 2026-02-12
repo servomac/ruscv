@@ -1,4 +1,3 @@
-
 #[derive(Debug)]
 pub struct SpannedToken {
     pub token: Token,
@@ -137,23 +136,9 @@ pub fn tokenize(source: &str) -> Vec<SpannedToken> {
                 });
             }
             '0'..='9' | '-' => {
-                let mut number_str = char.to_string();
-                while let Some(&next_char) = chars.peek() {
-                    if next_char.is_ascii_digit() {
-                        number_str.push(next_char);
-                        chars.next();
-                        column += 1;
-                    } else {
-                        break;
-                    }
-                }
-                let number = number_str.parse::<i32>().unwrap();
-                tokens.push(SpannedToken {
-                    token: Token::Immediate(number),
-                    line,
-                    column,
-                });
-                column += 1;
+                let token = read_number(char, &mut chars, line, column);
+                column = token.column;
+                tokens.push(token);
             }
             'A'..='Z' | 'a'..='z' | '_' => {
                 let mut identifier = char.to_string();
@@ -187,14 +172,55 @@ pub fn tokenize(source: &str) -> Vec<SpannedToken> {
     tokens
 }
 
+fn read_number(first_char: char, chars: &mut std::iter::Peekable<std::str::Chars>, line: usize, mut column: usize) -> SpannedToken {
+    // TODO handle errors properly instead of panicking
+    let mut number_str = String::new();
+    let mut radix = 10;
+    let is_negative = first_char == '-';
+
+    let mut next_digit = if is_negative {
+        chars.next().unwrap_or(' ')
+    } else {
+        first_char
+    };
+
+    if next_digit == '0' && let Some(&prefix) = chars.peek() {
+        match prefix {
+            'x' | 'X' => { radix = 16; chars.next(); column += 1; },
+            'b' | 'B' => { radix = 2;  chars.next(); column += 1; },
+            'o' | 'O' => { radix = 8;  chars.next(); column += 1; },
+            _ => { number_str.push('0'); }
+        }
+    } else {
+        number_str.push(next_digit);
+    }
+
+    while let Some(&next) = chars.peek() {
+        if next.is_digit(radix) || (radix == 16 && next.is_ascii_hexdigit()) {
+            number_str.push(next);
+            chars.next();
+            column += 1;
+        } else {
+            break;
+        }
+    }
+
+    // TODO check fail
+    let mut val = i32::from_str_radix(&number_str, radix).unwrap_or(0);
+    if is_negative { val = -val; }
+
+    SpannedToken {
+        token: Token::Immediate(val),
+        line,
+        column,
+    }
+}
+
 fn classify_identifier(ident: &str) -> Token {
     // Lets search for registers first, since they can be confused with labels or instructions
-    if ident.starts_with('x') && ident.len() > 1 {
-        if let Ok(num) = ident[1..].parse::<u8>() {
-            if num <= 31 {
-                return Token::Register(num);
-            }
-        }
+    if ident.starts_with('x') && ident.len() > 1
+        && let Ok(num) = ident[1..].parse::<u8>()  && num <= 31 {
+            return Token::Register(num);
     }
 
     // Try to match the identifier with the ABI register names (like "zero", "ra", "sp", etc)
@@ -319,6 +345,19 @@ mod tests {
         assert_eq!(tokens[3].token, Token::Register(2));
         assert_eq!(tokens[4].token, Token::Comma);
         assert_eq!(tokens[5].token, Token::Immediate(-16));
+    }
+
+    #[test]
+    fn test_inmediate_hexadecimal() {
+        let source = "addi a0, sp, 0xFF";
+        let tokens = tokenize(source);
+        assert_eq!(tokens.len(), 7); // 6 tokens + Eof
+        assert_eq!(tokens[0].token, Token::Instruction("addi".to_string()));
+        assert_eq!(tokens[1].token, Token::Register(10));
+        assert_eq!(tokens[2].token, Token::Comma);
+        assert_eq!(tokens[3].token, Token::Register(2));
+        assert_eq!(tokens[4].token, Token::Comma);
+        assert_eq!(tokens[5].token, Token::Immediate(255)); // 0xFF is 255 in decimal
     }
     // TODO test lines and columns in SpannedToken
 }

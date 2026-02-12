@@ -51,7 +51,13 @@ impl SymbolTable {
                 }
 
                 Statement::Directive(name, operands) => {
-                    let size = self.calculate_directive_size(name, operands)?;
+                    let current_pc = if current_section == ".text" {
+                        text_base + text_offset
+                    } else {
+                        data_base + data_offset
+                    };
+
+                    let size = self.calculate_directive_size(name, operands, current_pc)?;
 
                     if current_section == ".text" {
                         text_offset += size;
@@ -65,18 +71,30 @@ impl SymbolTable {
     }
 
     // Size in bytes that the directive will occupy in memory
-    fn calculate_directive_size(&self, name: &str, operands: &[Operand]) -> Result<u32, String> {
+    fn calculate_directive_size(&self, name: &str, operands: &[Operand], current_pc: u32) -> Result<u32, String> {
         match name {
+            ".align" => {
+                if let Some(Operand::Immediate(pow)) = operands.get(0) {
+                    let alignment = 2u32.pow(*pow as u32);
+                    let aligned_pc = (current_pc + alignment - 1) & !(alignment - 1);
+                    Ok(aligned_pc - current_pc)
+                } else {
+                    Err("Directive .align requieres a power of 2 parameter".into())
+                }
+            },
             ".word"  => Ok((operands.len() as u32) * 4),
             ".half"  => Ok((operands.len() as u32) * 2),
             ".byte"  => Ok(operands.len() as u32),
-            ".asciz" | ".string" => {
+            ".ascii" | ".asciz" | ".string" => {
                 let mut total = 0;
+                let has_null = name != ".ascii";
+
                 for op in operands {
                     if let Operand::StringLiteral(s) = op {
-                        total += (s.len() as u32) + 1; // +1 for the end \0
+                        total += s.len() as u32;
+                        if has_null { total += 1; }
                     } else {
-                        return Err(format!("Directive {} requires an string literal", name));
+                        return Err(format!("Directive {} requires a string literal", name));
                     }
                 }
                 Ok(total)
@@ -89,8 +107,6 @@ impl SymbolTable {
                     Err("Directive .space requires an inmediate value".into())
                 }
             },
-            // Those directives don't use space
-            ".globl" | ".text" | ".data" | ".align" => Ok(0), 
             _ => Ok(0),
         }
     }
@@ -135,5 +151,24 @@ mod tests {
         assert_eq!(sym_table.get_address("msg"), Some(0x1001_0000));
         assert_eq!(sym_table.get_address("num"), Some(0x1001_0004)); // 3 bytes for the string "Hi!" + 1 for \0
         assert_eq!(sym_table.get_address("text"), Some(0x1001_0004 + 4)); // 4 bytes for the word
+    }
+
+    #[test]
+    fn text_symbol_table_with_align() {
+        let source = "
+            .data
+            .string \"Hi\"
+            .align 4
+            my_aligned_label: .byte 0xFF
+        ";
+
+        let tokens = tokenize(source);
+        let mut parser = Parser::new(tokens);
+        let statements = parser.parse().unwrap();
+
+        let mut sym_table = SymbolTable::new();
+        sym_table.build(&statements).unwrap();
+
+        assert_eq!(sym_table.get_address("my_aligned_label"), Some(0x1001_0010)) // 3 for "Hi" + 1 for \0, then aligned to 4 bytes
     }
 }
