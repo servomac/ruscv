@@ -7,6 +7,9 @@ use parser::Parser;
 mod symbols;
 use symbols::SymbolTable;
 
+mod assembler;
+use assembler::Assembler;
+
 const NUM_REGISTERS: usize = 32;
 
 struct Processor {
@@ -37,44 +40,19 @@ impl Processor {
     }
 }
 
-#[derive(Clone)]
-struct Instruction {
-    asm: String,
-    machine_code: u32,
-}
-
-struct Assembler {
-    code: Vec<Instruction>,
-}
-
-impl Assembler {
-    fn new() -> Self {
-        Assembler { code: Vec::new() }
-    }
-
-    fn assemble(&mut self, assembler: &str) -> Vec<Instruction> {
-        // TODO implement tokenize lexer ISA etc
-        let tokens = tokenize(assembler);
-        for token in &tokens {
-            println!("Token: {:?}", token);
-            self.code.push(Instruction {
-                asm: assembler.to_string(),
-                machine_code: 0,
-            });
-        }
-        let mut parser = Parser::new(tokens);
-        let statements = parser.parse().unwrap();
-        let mut symbol_table = SymbolTable::new();
-        let _ = symbol_table.build(&statements);
-        // Dummy implementation for illustration
-        self.code.clone()
-    }
-}
 
 
 fn main() {
+    let tokens = tokenize("add x20, x19, x18");
+    let mut parser = Parser::new(tokens);
+    let statements = parser.parse().unwrap();
+
+    let mut symbol_table = SymbolTable::new();
+    symbol_table.build(&statements);
+
     let mut assembler = Assembler::new();
-    let instructions = assembler.assemble("add x20, x19, x18");
+    let instructions = assembler.assemble(&statements, &symbol_table);
+
     let p = Processor::new(128);
     p.show_state();
     println!("{}", p.memory_dump());
