@@ -95,16 +95,64 @@ impl Assembler {
 
 }
 
-
 fn encode_instruction(name: &str, ops: &[Operand], sym_table: &SymbolTable, current_pc: u32) -> Result<u32, String> {
     match name {
-        "add" => encode_r_type(0x33, 0x0, 0x00, ops),
-        "sub" => encode_r_type(0x33, 0x0, 0x20, ops),
-        "addi" => encode_i_type(0x13, 0x0, ops, sym_table, current_pc),
-        "lw" => encode_i_type(0x03, 0x2, ops, sym_table, current_pc),
-        "sw" => encode_s_type(0x23, 0x2, ops, sym_table, current_pc),
-        "beq" => encode_b_type(0x63, 0x0, ops, sym_table, current_pc),
-        "jal" => encode_j_type(0x6F, ops, sym_table, current_pc),
+        // R-type | Opcode: 0x33 | Format: funct7, rs2, rs1, funct3, rd, opcode
+        "add"   => encode_r_type(0x33, 0x0, 0x00, ops),
+        "sub"   => encode_r_type(0x33, 0x0, 0x20, ops),
+        "sll"   => encode_r_type(0x33, 0x1, 0x00, ops),
+        "slt"   => encode_r_type(0x33, 0x2, 0x00, ops),
+        "sltu"  => encode_r_type(0x33, 0x3, 0x00, ops),
+        "xor"   => encode_r_type(0x33, 0x4, 0x00, ops),
+        "srl"   => encode_r_type(0x33, 0x5, 0x00, ops),
+        "sra"   => encode_r_type(0x33, 0x5, 0x20, ops),
+        "or"    => encode_r_type(0x33, 0x6, 0x00, ops),
+        "and"   => encode_r_type(0x33, 0x7, 0x00, ops),
+
+        // I-type | Opcode: 0x13 for ALU, 0x03 for Loads, 0x67 for JALR
+        "addi"  => encode_i_type(0x13, 0x0, ops, sym_table, current_pc),
+        "slti"  => encode_i_type(0x13, 0x2, ops, sym_table, current_pc),
+        "sltiu" => encode_i_type(0x13, 0x3, ops, sym_table, current_pc),
+        "xori"  => encode_i_type(0x13, 0x4, ops, sym_table, current_pc),
+        "ori"   => encode_i_type(0x13, 0x6, ops, sym_table, current_pc),
+        "andi"  => encode_i_type(0x13, 0x7, ops, sym_table, current_pc),
+        "slli"  => encode_i_shift(0x13, 0x1, 0x00, ops), // Special: uses shift amount
+        "srli"  => encode_i_shift(0x13, 0x5, 0x00, ops),
+        "srai"  => encode_i_shift(0x13, 0x5, 0x20, ops),
+
+        "lb"    => encode_i_type(0x03, 0x0, ops, sym_table, current_pc),
+        "lh"    => encode_i_type(0x03, 0x1, ops, sym_table, current_pc),
+        "lw"    => encode_i_type(0x03, 0x2, ops, sym_table, current_pc),
+        "lbu"   => encode_i_type(0x03, 0x4, ops, sym_table, current_pc),
+        "lhu"   => encode_i_type(0x03, 0x5, ops, sym_table, current_pc),
+
+        "jalr"  => encode_i_type(0x67, 0x0, ops, sym_table, current_pc),
+
+        // S-type | Opcode: 0x23
+        "sb"    => encode_s_type(0x23, 0x0, ops, sym_table, current_pc),
+        "sh"    => encode_s_type(0x23, 0x1, ops, sym_table, current_pc),
+        "sw"    => encode_s_type(0x23, 0x2, ops, sym_table, current_pc),
+
+        // B-type | Opcode: 0x63
+        "beq"   => encode_b_type(0x63, 0x0, ops, sym_table, current_pc),
+        "bne"   => encode_b_type(0x63, 0x1, ops, sym_table, current_pc),
+        "blt"   => encode_b_type(0x63, 0x4, ops, sym_table, current_pc),
+        "bge"   => encode_b_type(0x63, 0x5, ops, sym_table, current_pc),
+        "bltu"  => encode_b_type(0x63, 0x6, ops, sym_table, current_pc),
+        "bgeu"  => encode_b_type(0x63, 0x7, ops, sym_table, current_pc),
+
+        // TODO U-type | Opcode: 0x37 LUI, 0x17 AUIPC
+        //"lui"   => encode_u_type(0x37, ops, sym_table, current_pc),
+        //"auipc" => encode_u_type(0x17, ops, sym_table, current_pc),
+
+        // J-type | Opcode: 0x6F
+        "jal"   => encode_j_type(0x6F, ops, sym_table, current_pc),
+
+        // System and Miscellaneous
+        "ecall"  => Ok(0x00000073),
+        "ebreak" => Ok(0x00100073),
+        "fence"  => Ok(0x0000000F), // TODO Simplified for this example
+
         _ => Err(format!("Unsupported instruction '{}'", name)),
     }
 }
@@ -123,6 +171,30 @@ fn encode_i_type(opcode: u8, funct3: u8, ops: &[Operand], _sym_table: &SymbolTab
         Ok(((imm_val as u32) << 20) | ((*rs1 as u32) << 15) | ((funct3 as u32) << 12) | ((*rd as u32) << 7) | (opcode as u32))
     } else {
         Err("Invalid operands for I-type instruction: expected register, register, immediate".to_string())
+    }
+}
+
+fn encode_i_shift(
+    opcode: u8,
+    funct3: u8,
+    funct7: u8,
+    ops: &[Operand]
+) -> Result<u32, String> {
+    if let [Operand::Register(rd), Operand::Register(rs1), Operand::Immediate(shamt)] = ops {
+        if *shamt < 0 || *shamt > 31 {
+            return Err(format!("Shift amount {} out of range (0-31)", shamt));
+        }
+
+        let instruction = ((funct7 as u32) << 25) | // Control bits (e.g. 0x20 for srai)
+                          ((*shamt as u32) << 20) | // Shift amount
+                          ((*rs1 as u32) << 15)   | // Source register
+                          ((funct3 as u32) << 12) | // Shift type
+                          ((*rd as u32) << 7)     | // Destination register
+                          (opcode as u32);          // 0x13
+
+        Ok(instruction)
+    } else {
+        Err("Invalid operands for shift instruction: expected rd, rs1, shamt".to_string())
     }
 }
 
@@ -165,7 +237,7 @@ fn encode_s_type(
 
 fn encode_b_type(opcode: u8, funct3: u8, ops: &[Operand], _sym_table: &SymbolTable, _current_pc: u32) -> Result<u32, String> {
     if let [Operand::Register(rs1), Operand::Register(rs2), Operand::Immediate(imm)] = ops {
-        let imm_val = *imm; // resolve_immediate(*imm, sym_table, current_pc);
+        let imm_val = *imm; // TODO review resolve_immediate(*imm, sym_table, current_pc);
         let imm_12 = (imm_val >> 12) & 0x1;
         let imm_10_5 = (imm_val >> 5) & 0x3F;
         let imm_4_1 = (imm_val >> 1) & 0xF;
@@ -178,7 +250,7 @@ fn encode_b_type(opcode: u8, funct3: u8, ops: &[Operand], _sym_table: &SymbolTab
 
 fn encode_j_type(opcode: u8, ops: &[Operand], _sym_table: &SymbolTable, _current_pc: u32) -> Result<u32, String> {
     if let [Operand::Register(rd), Operand::Immediate(imm)] = ops {
-        let imm_val = *imm; // resolve_immediate(*imm, sym_table, current_pc);
+        let imm_val = *imm; // TODO review resolve_immediate(*imm, sym_table, current_pc);
         let imm_20 = (imm_val >> 20) & 0x1;
         let imm_10_1 = (imm_val >> 1) & 0x3FF;
         let imm_11 = (imm_val >> 11) & 0x1;
@@ -565,5 +637,37 @@ mod tests {
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].line, 1);
         assert!(errors[0].message.contains("Unknown label 'unknown'"));
+    }
+
+    #[test]
+    fn test_encoding_of_i_shift_instruction() {
+        let mut assembler = Assembler::new();
+        let sym_table = SymbolTable::new();
+        let statements = vec![
+            Statement {
+                kind: StatementKind::Instruction("srai".to_string(), vec![
+                    Operand::Register(10),
+                    Operand::Register(11),
+                    Operand::Immediate(4),
+                ]),
+                line: 1,
+            },
+        ];
+
+        let result = assembler.assemble(&statements, &sym_table);
+        assert!(result.is_ok());
+        let instructions = assembler.text_bin;
+        assert_eq!(instructions.len(), 4);
+        // srai x10, x11, 4
+        // opcode=0x13, rd=10, funct3=0x5, rs1=11, shamt=4, funct7=0x20
+        assert_eq!(
+            instructions,
+            vec![
+                0b00010011, // 19  (rd[0]=0 + opcode=0x13)
+                0b11010101, // 213 (rs1[0]=1 + funct3=101 + rd[4:1]=0101)
+                0b01000101, // 69  (shamt[3:0]=0100 + rs1[4:1]=0101)
+                0b01000000, // 64  (funct7=0100000 + shamt[4]=0)
+            ]
+        );
     }
 }

@@ -178,7 +178,7 @@ fn read_number(first_char: char, chars: &mut std::iter::Peekable<std::str::Chars
     let mut radix = 10;
     let is_negative = first_char == '-';
 
-    let mut next_digit = if is_negative {
+    let next_digit = if is_negative {
         chars.next().unwrap_or(' ')
     } else {
         first_char

@@ -119,7 +119,7 @@ impl SymbolTable {
 #[cfg(test)]
 mod tests {
     use crate::lexer::tokenize;
-    use crate::parser::{Parser, StatementKind};
+    use crate::parser::Parser;
 
     use super::*;
 
