@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::parser::{Statement, Operand};
+use crate::parser::{Statement, StatementKind, Operand};
 use crate::symbols::SymbolTable;
 
 pub struct DebugInfo {
@@ -37,18 +37,18 @@ impl Assembler {
             let addr = if current_section == ".text" { current_pc } else { data_pc };
 
             self.debug_info.address_to_source.insert(addr, SourceMapping {
-                line: 0, // TODO statement needs line, now only in token
-                raw_text: " ".to_string(), // TODO statement should implement Display stmt.to_string(),
+                line: stmt.line,
+                raw_text: stmt.to_string(),
                 section: current_section.to_string(),
             });
 
-            match stmt {
-                Statement::Instruction(name, ops) => {
+            match &stmt.kind {
+                StatementKind::Instruction(name, ops) => {
                     let bytes = encode_instruction(name, ops, sym_table, current_pc);
                     self.text_bin.extend_from_slice(&bytes.to_le_bytes());
                     current_pc += 4;
                 }
-                Statement::Directive(name, ops) => {
+                StatementKind::Directive(name, ops) => {
                     if name == ".text" || name == ".data" {
                         current_section = name.as_str();
                         continue; // No bytes to emit for section directives
@@ -157,15 +157,24 @@ mod tests {
         let mut assembler = Assembler::new();
         let sym_table = SymbolTable::new();
         let statements = vec![
-            Statement::Instruction("add".to_string(), vec![
-                Operand::Register(1),
-                Operand::Register(2),
-                Operand::Register(3),
-            ]),
-            Statement::Directive(".data".to_string(), vec![]), // Switch to .data section,
-            Statement::Directive(".word".to_string(), vec![
-                Operand::Immediate(42),
-            ]),
+            Statement {
+                kind: StatementKind::Instruction("add".to_string(), vec![
+                    Operand::Register(1),
+                    Operand::Register(2),
+                    Operand::Register(3),
+                ]),
+                line: 1,
+            },
+            Statement {
+                kind: StatementKind::Directive(".data".to_string(), vec![]),
+                line: 2,
+            },
+            Statement {
+                kind: StatementKind::Directive(".word".to_string(), vec![
+                    Operand::Immediate(42),
+                ]),
+                line: 3,
+            },
         ];
         assembler.assemble(&statements, &sym_table);
         assert_eq!(assembler.text_bin.len(), 4);

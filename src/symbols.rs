@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::parser::{Statement, Operand};
+use crate::parser::{Statement, StatementKind, Operand};
 
 pub struct SymbolTable {
     symbols: HashMap<String, u32>,
@@ -22,12 +22,12 @@ impl SymbolTable {
         let mut current_section = ".text";
 
         for stmt in statements {
-            match stmt {
-                Statement::Directive(name, _) if name == ".text" || name == ".data" => {
+            match &stmt.kind {
+                StatementKind::Directive(name, _) if name == ".text" || name == ".data" => {
                     current_section = name.as_str();
                 }
 
-                Statement::Label(name) => {
+                StatementKind::Label(name) => {
                     if self.symbols.contains_key(name) {
                         return Err(format!("Error: Duplicated label '{}'", name));
                     }
@@ -41,7 +41,7 @@ impl SymbolTable {
                     self.symbols.insert(name.clone(), address);
                 }
 
-                Statement::Instruction(_, _) => {
+                StatementKind::Instruction(_, _) => {
                     if current_section == ".text" {
                         text_offset += 4;
                     } else {
@@ -50,7 +50,7 @@ impl SymbolTable {
                     }
                 }
 
-                Statement::Directive(name, operands) => {
+                StatementKind::Directive(name, operands) => {
                     let current_pc = if current_section == ".text" {
                         text_base + text_offset
                     } else {
@@ -119,7 +119,7 @@ impl SymbolTable {
 #[cfg(test)]
 mod tests {
     use crate::lexer::tokenize;
-    use crate::parser::{Parser, Statement, Operand};
+    use crate::parser::{Parser, StatementKind};
 
     use super::*;
 

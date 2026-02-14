@@ -1,4 +1,5 @@
 use std::mem::discriminant;
+use std::fmt;
 
 use crate::lexer::{SpannedToken, Token};
 
@@ -11,11 +12,63 @@ pub enum Operand {
     Memory { offset: i32, reg: u8 },
 }
 
+impl fmt::Display for Operand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Operand::Register(n) => write!(f, "x{}", n),
+            Operand::Immediate(n) => write!(f, "{}", n),
+            Operand::Label(s) => write!(f, "{}", s),
+            Operand::StringLiteral(s) => write!(f, "\"{}\"", s),
+            Operand::Memory { offset, reg } => write!(f, "{}(x{})", offset, reg),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
-pub enum Statement {
+pub struct Statement {
+    pub kind: StatementKind,
+    pub line: usize,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum StatementKind {
     Instruction(String, Vec<Operand>),
     Label(String),
     Directive(String, Vec<Operand>),
+}
+
+impl fmt::Display for Statement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.kind {
+            StatementKind::Instruction(name, ops) => {
+                write!(f, "{}", name)?;
+                if !ops.is_empty() {
+                    write!(f, " ")?;
+                    for (i, op) in ops.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{}", op)?;
+                    }
+                }
+                Ok(())
+            }
+            StatementKind::Label(name) => write!(f, "{}:", name),
+            StatementKind::Directive(name, ops) => {
+                write!(f, "{}", name)?;
+                if !ops.is_empty() {
+                    write!(f, " ")?;
+                    for (i, op) in ops.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{}", op)?;
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 pub struct Parser {
@@ -90,13 +143,14 @@ impl Parser {
         if self.is_at_end() { return Ok(None); }
 
         let current_token = self.peek().clone();
+        let line = self.tokens[self.position].line;
 
-        let statement = match current_token {
+        let statement_kind = match current_token {
             Token::Label(label) => {
                 let label_name = label.clone();
                 self.advance();
                 self.consume(&Token::Colon, "A colon is expected after a label (':')")?;
-                Statement::Label(label_name)
+                StatementKind::Label(label_name)
             },
 
             Token::Instruction(mnemonic) => {
@@ -111,7 +165,7 @@ impl Parser {
                         operands.push(self.parse_operand()?);
                     }
                 }
-                Statement::Instruction(mnemonic, operands)
+                StatementKind::Instruction(mnemonic, operands)
             },
 
             Token::Directive(directive) => {
@@ -126,7 +180,7 @@ impl Parser {
                         operands.push(self.parse_directive_operand()?);
                     }
                 }
-                Statement::Directive(directive, operands)
+                StatementKind::Directive(directive, operands)
             },
 
             Token::Newline => {
@@ -138,7 +192,7 @@ impl Parser {
 
         };
 
-        Ok(Some(statement))
+        Ok(Some(Statement { kind: statement_kind, line }))
     }
 
     fn parse_operand(&mut self) -> Result<Operand, String> {
@@ -213,11 +267,12 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let nodes = parser.parse().unwrap();
         assert_eq!(nodes.len(), 1);
-        assert_eq!(nodes[0], Statement::Instruction("add".to_string(), vec![
+        assert_eq!(nodes[0].kind, StatementKind::Instruction("add".to_string(), vec![
             Operand::Register(1),
             Operand::Register(2),
             Operand::Register(3),
         ]));
+        assert_eq!(nodes[0].line, 1);
     }
 
     #[test]
@@ -226,11 +281,12 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let nodes = parser.parse().unwrap();
         assert_eq!(nodes.len(), 1);
-        assert_eq!(nodes[0], Statement::Instruction("addi".to_string(), vec![
+        assert_eq!(nodes[0].kind, StatementKind::Instruction("addi".to_string(), vec![
             Operand::Register(1),
             Operand::Register(2),
             Operand::Immediate(10),
         ]));
+        assert_eq!(nodes[0].line, 1);
     }
 
     #[test]
@@ -239,10 +295,11 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let nodes = parser.parse().unwrap();
         assert_eq!(nodes.len(), 1);
-        assert_eq!(nodes[0], Statement::Instruction("sw".to_string(), vec![
+        assert_eq!(nodes[0].kind, StatementKind::Instruction("sw".to_string(), vec![
             Operand::Register(1),
             Operand::Memory { offset: 4, reg: 2 },
         ]));
+        assert_eq!(nodes[0].line, 1);
     }
 
     #[test]
@@ -252,12 +309,14 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let nodes = parser.parse().unwrap();
         assert_eq!(nodes.len(), 2);
-        assert_eq!(nodes[0], Statement::Label("loop".to_string()));
-        assert_eq!(nodes[1], Statement::Instruction("add".to_string(), vec![
+        assert_eq!(nodes[0].kind, StatementKind::Label("loop".to_string()));
+        assert_eq!(nodes[0].line, 1);
+        assert_eq!(nodes[1].kind, StatementKind::Instruction("add".to_string(), vec![
             Operand::Register(1),
             Operand::Register(2),
             Operand::Register(3),
         ]));
+        assert_eq!(nodes[1].line, 2);
     }
 
     #[test]
@@ -266,11 +325,14 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let nodes = parser.parse().unwrap();
         assert_eq!(nodes.len(), 3);
-        assert_eq!(nodes[0], Statement::Directive(".data".to_string(), vec![]));
-        assert_eq!(nodes[1], Statement::Label("myVar".to_string()));
-        assert_eq!(nodes[2], Statement::Directive(".word".to_string(), vec![
+        assert_eq!(nodes[0].kind, StatementKind::Directive(".data".to_string(), vec![]));
+        assert_eq!(nodes[0].line, 1);
+        assert_eq!(nodes[1].kind, StatementKind::Label("myVar".to_string()));
+        assert_eq!(nodes[1].line, 2);
+        assert_eq!(nodes[2].kind, StatementKind::Directive(".word".to_string(), vec![
             Operand::Immediate(42),
         ]));
+        assert_eq!(nodes[2].line, 2);
     }
 
     #[test]
@@ -279,9 +341,10 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let nodes = parser.parse().unwrap();
         assert_eq!(nodes.len(), 1);
-        assert_eq!(nodes[0], Statement::Directive(".asciiz".to_string(), vec![
+        assert_eq!(nodes[0].kind, StatementKind::Directive(".asciiz".to_string(), vec![
             Operand::StringLiteral("Hello, world!".to_string()),
         ]));
+        assert_eq!(nodes[0].line, 1);
     }
 
 }
