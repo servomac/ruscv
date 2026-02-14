@@ -48,12 +48,21 @@ fn main() {
     let statements = parser.parse().unwrap();
 
     let mut symbol_table = SymbolTable::new();
-    symbol_table.build(&statements);
+    symbol_table.build(&statements).expect("Symbol table build failed");
 
     let mut assembler = Assembler::new();
-    let instructions = assembler.assemble(&statements, &symbol_table);
-
-    let p = Processor::new(128);
-    p.show_state();
-    println!("{}", p.memory_dump());
+    match assembler.assemble(&statements, &symbol_table) {
+        Ok(()) => {
+            let p = Processor::new(128);
+            p.show_state();
+            println!("{}", p.memory_dump());
+        }
+        Err(errors) => {
+            eprintln!("Assembly failed with {} error(s):", errors.len());
+            for error in errors {
+                eprintln!("  Line {}: {}", error.line, error.message);
+            }
+            std::process::exit(1);
+        }
+    }
 }
