@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::parser::{Statement, StatementKind, Operand};
+use crate::parser::{Statement, StatementKind, Operand, MemoryOffset};
 use crate::symbols::SymbolTable;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -100,6 +100,7 @@ fn encode_instruction(name: &str, ops: &[Operand], sym_table: &SymbolTable, curr
     match name {
         "add" => encode_r_type(0x33, 0x0, 0x00, ops),
         "sub" => encode_r_type(0x33, 0x0, 0x20, ops),
+        "addi" => encode_i_type(0x13, 0x0, ops, sym_table, current_pc),
         "lw" => encode_i_type(0x03, 0x2, ops, sym_table, current_pc),
         "sw" => encode_s_type(0x23, 0x2, ops, sym_table, current_pc),
         "beq" => encode_b_type(0x63, 0x0, ops, sym_table, current_pc),
@@ -125,12 +126,40 @@ fn encode_i_type(opcode: u8, funct3: u8, ops: &[Operand], _sym_table: &SymbolTab
     }
 }
 
-fn encode_s_type(opcode: u8, funct3: u8, ops: &[Operand], _sym_table: &SymbolTable, _current_pc: u32) -> Result<u32, String> {
-    if let [Operand::Register(_rs2), Operand::Memory { offset, reg }] = ops {
-        let imm_val = *offset; // resolve_immediate(*offset, sym_table, current_pc);
-        Ok(((imm_val as u32 & 0xFE0) << 20) | ((*reg as u32) << 15) | ((funct3 as u32) << 12) | ((imm_val as u32 & 0x1F) << 7) | (opcode as u32))
+fn encode_s_type(
+    opcode: u8,
+    funct3: u8,
+    ops: &[Operand],
+    sym_table: &SymbolTable,
+    _current_pc: u32
+) -> Result<u32, String> {
+    // Note: The usual order in RISC-V is sw rs2, offset(rs1)
+    if let [Operand::Register(rs2), Operand::Memory { offset, reg }] = ops {
+        // 1. Resolve the immediate (can be label or number)
+        let imm_val = match offset {
+            MemoryOffset::Immediate(val) => *val,
+            MemoryOffset::Label(name) => {
+                sym_table.get_address(name)
+                    .ok_or(format!("Unknown label '{}'", name))? as i32
+            }
+        };
+
+        // 2. Extract immediate bits (12 bits)
+        let imm = (imm_val as u32) & 0xFFF;
+        let imm_11_5 = (imm >> 5) & 0x7F; // 7 upper bits
+        let imm_4_0 = imm & 0x1F;         // 5 lower bits
+
+        // 3. Pack everything into the 32-bit word
+        let instruction = (imm_11_5 << 25)      | // imm[11:5]
+                          ((*rs2 as u32) << 20) | // rs2
+                          ((*reg as u32) << 15) | // rs1 (base register)
+                          ((funct3 as u32) << 12) | // funct3
+                          (imm_4_0 << 7)        | // imm[4:0]
+                          (opcode as u32);        // opcode
+
+        Ok(instruction)
     } else {
-        Err("Invalid operands for S-type instruction: expected register, memory(offset(reg))".to_string())
+        Err("Invalid operands for S-type instruction: expected reg, offset(reg)".to_string())
     }
 }
 
@@ -158,11 +187,6 @@ fn encode_j_type(opcode: u8, ops: &[Operand], _sym_table: &SymbolTable, _current
     } else {
         Err("Invalid operands for J-type instruction: expected register, immediate".to_string())
     }
-}
-
-fn _resolve_immediate(imm: i32, _sym_table: &SymbolTable, _current_pc: u32) -> i32 {
-    // TODO if imm is a label, look up in sym_table and calculate offset
-    imm
 }
 
 fn emit_data_bytes(name: &str, ops: &[Operand]) -> Result<Vec<u8>, String> {
@@ -450,5 +474,96 @@ mod tests {
 
         // Verify that the valid instruction was assembled
         assert_eq!(assembler.text_bin.len(), 4);
+    }
+
+    #[test]
+    fn test_assemble_i_type_instruction() {
+        let mut assembler = Assembler::new();
+        let sym_table = SymbolTable::new();
+        let statements = vec![
+            Statement {
+                kind: StatementKind::Instruction("addi".to_string(), vec![
+                    Operand::Register(19),
+                    Operand::Register(20),
+                    Operand::Immediate(8),
+                ]),
+                line: 1,
+            },
+        ];
+
+        let result = assembler.assemble(&statements, &sym_table);
+        assert!(result.is_ok());
+        let instructions = assembler.text_bin;
+        assert_eq!(instructions.len(), 4);
+        assert_eq!(
+            instructions[0..4],
+            vec![
+                // Byte 0: rd[0] (1) + opcode (0010011)
+                0b10010011,
+                // Byte 1: rs1[0] (0) + funct3 (000) + rd[4:1] (1001)
+                0b00001001,
+                // Byte 2: imm[3:0] (1000) + rs1[4:1] (1010)
+                0b10001010,
+                // Byte 3: imm[11:4] (00000000)
+                0b00000000,
+        ]);
+    }
+
+    #[test]
+    fn test_assemble_i_type_instruction_with_negative_immediate() {
+        let mut assembler = Assembler::new();
+        let sym_table = SymbolTable::new();
+        let statements = vec![
+            Statement {
+                kind: StatementKind::Instruction("addi".to_string(), vec![
+                    Operand::Register(19),
+                    Operand::Register(20),
+                    Operand::Immediate(-8),
+                ]),
+                line: 1,
+            },
+        ];
+
+        let result = assembler.assemble(&statements, &sym_table);
+        assert!(result.is_ok());
+        let instructions = assembler.text_bin;
+        assert_eq!(instructions.len(), 4);
+        assert_eq!(
+            instructions[0..4],
+            vec![
+                // Byte 0: rd[0] (1) + opcode (0010011)
+                0b10010011,
+                // Byte 1: rs1[0] (0) + funct3 (000) + rd[4:1] (1001)
+                0b00001001,
+                // Byte 2: imm[3:0] (1000) + rs1[4:1] (1010)
+                0b10001010,
+                // Byte 3: imm[11:4] (00000000)
+                0b11111111,
+        ]);
+    }
+
+    #[test]
+    fn test_s_instruction_with_unknown_label() {
+        let mut assembler = Assembler::new();
+        let sym_table = SymbolTable::new();
+        let statements = vec![
+            Statement {
+                kind: StatementKind::Instruction("sw".to_string(), vec![
+                    Operand::Register(19),
+                    Operand::Memory {
+                        offset: MemoryOffset::Label("unknown".to_string()),
+                        reg: 0
+                    },
+                ]),
+                line: 1,
+            },
+        ];
+
+        let result = assembler.assemble(&statements, &sym_table);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].line, 1);
+        assert!(errors[0].message.contains("Unknown label 'unknown'"));
     }
 }

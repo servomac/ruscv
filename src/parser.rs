@@ -3,13 +3,28 @@ use std::fmt;
 
 use crate::lexer::{SpannedToken, Token};
 
+#[derive(Debug, PartialEq, Clone)]
+pub enum MemoryOffset {
+    Immediate(i32),
+    Label(String),
+}
+
+impl fmt::Display for MemoryOffset {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MemoryOffset::Immediate(n) => write!(f, "{}", n),
+            MemoryOffset::Label(s) => write!(f, "{}", s),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Operand {
     Register(u8),
     Immediate(i32),
     Label(String),
     StringLiteral(String),
-    Memory { offset: i32, reg: u8 },
+    Memory { offset: MemoryOffset, reg: u8 },
 }
 
 impl fmt::Display for Operand {
@@ -105,7 +120,7 @@ impl Parser {
         &self.tokens[self.position - 1].token
     }
 
-    // Consumes the expected token and advances the position, or panics with an error message if it doesn't match
+    // Consumes the expected token and advances the position
     fn consume(&mut self, expected: &Token, error_message: &str) -> Result<Token, String> {
         if self.check(expected) {
             Ok(self.advance())
@@ -224,7 +239,7 @@ impl Parser {
 
                     self.consume(&Token::RParenthesis, "Right parenthesis expected after base register")?;
 
-                    Ok(Operand::Memory { offset: imm, reg })
+                    Ok(Operand::Memory { offset: MemoryOffset::Immediate(imm), reg })
                 } else {
                     Ok(Operand::Immediate(imm))
                 }
@@ -232,7 +247,27 @@ impl Parser {
 
             Token::Label(label) => {
                 self.advance();
-                Ok(Operand::Label(label))
+                // Check if this is a memory operand with label offset
+                if self.check(&Token::LParenthesis) {
+                    self.advance(); // consume left parenthesis
+
+                    // consume the register inside the parentheses
+                    let reg_token = self.consume(
+                        &Token::Register(0),
+                        "A register was expected inside parentheses for memory addressing"
+                    )?;
+
+                    let reg = match reg_token {
+                        Token::Register(r) => r,
+                        _ => unreachable!(),
+                    };
+
+                    self.consume(&Token::RParenthesis, "Right parenthesis expected after base register")?;
+
+                    Ok(Operand::Memory { offset: MemoryOffset::Label(label), reg })
+                } else {
+                    Ok(Operand::Label(label))
+                }
             }
 
             _ => Err(format!(
@@ -297,7 +332,7 @@ mod tests {
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].kind, StatementKind::Instruction("sw".to_string(), vec![
             Operand::Register(1),
-            Operand::Memory { offset: 4, reg: 2 },
+            Operand::Memory { offset: MemoryOffset::Immediate(4), reg: 2 },
         ]));
         assert_eq!(nodes[0].line, 1);
     }
@@ -343,6 +378,19 @@ mod tests {
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].kind, StatementKind::Directive(".asciiz".to_string(), vec![
             Operand::StringLiteral("Hello, world!".to_string()),
+        ]));
+        assert_eq!(nodes[0].line, 1);
+    }
+
+    #[test]
+    fn test_label_in_memory_operand_parsing() {
+        let tokens = tokenize("sw x1, my_label(x2)");
+        let mut parser = Parser::new(tokens);
+        let nodes = parser.parse().unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].kind, StatementKind::Instruction("sw".to_string(), vec![
+            Operand::Register(1),
+            Operand::Memory { offset: MemoryOffset::Label("my_label".to_string()), reg: 2 },
         ]));
         assert_eq!(nodes[0].line, 1);
     }
