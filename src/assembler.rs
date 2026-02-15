@@ -165,13 +165,31 @@ fn encode_r_type(opcode: u8, funct3: u8, funct7: u8, ops: &[Operand]) -> Result<
     }
 }
 
-fn encode_i_type(opcode: u8, funct3: u8, ops: &[Operand], _sym_table: &SymbolTable, _current_pc: u32) -> Result<u32, String> {
-    if let [Operand::Register(rd), Operand::Register(rs1), Operand::Immediate(imm)] = ops {
-        let imm_val = *imm; // resolve_immediate(*imm, sym_table, current_pc);
-        Ok(((imm_val as u32) << 20) | ((*rs1 as u32) << 15) | ((funct3 as u32) << 12) | ((*rd as u32) << 7) | (opcode as u32))
-    } else {
-        Err("Invalid operands for I-type instruction: expected register, register, immediate".to_string())
+fn encode_i_type(opcode: u8, funct3: u8, ops: &[Operand], sym_table: &SymbolTable, _current_pc: u32) -> Result<u32, String> {
+    let (rd, rs1, base_op) = match (opcode, ops) {
+        // load y jalr: rd, offset(rs1)
+        (0x03 | 0x67, [Operand::Register(rd), mem @ Operand::Memory { reg, .. }]) => {
+            (*rd, *reg, mem)
+        },
+        // alu immediate: rd, rs1, imm
+        (0x13, [Operand::Register(rd), Operand::Register(rs1), imm]) => {
+            (*rd, *rs1, imm)
+        },
+        _ => return Err("Invalid operands for I-type instruction".to_string()),
+    };
+
+    let imm_val = resolve_any_immediate(base_op, sym_table)?;
+
+    if imm_val < -2048 || imm_val > 2047 {
+        return Err(format!("Immediate value {} out of range for 12-bit field", imm_val));
     }
+
+    let instruction = ((imm_val as u32 & 0xFFF) << 20) |
+                      ((rs1 as u32) << 15)            |
+                      ((funct3 as u32) << 12)         |
+                      ((rd as u32) << 7)              |
+                      (opcode as u32);
+    Ok(instruction)
 }
 
 fn encode_i_shift(
@@ -207,21 +225,15 @@ fn encode_s_type(
 ) -> Result<u32, String> {
     // Note: The usual order in RISC-V is sw rs2, offset(rs1)
     if let [Operand::Register(rs2), Operand::Memory { offset, reg }] = ops {
-        // 1. Resolve the immediate (can be label or number)
-        let imm_val = match offset {
-            MemoryOffset::Immediate(val) => *val,
-            MemoryOffset::Label(name) => {
-                sym_table.get_address(name)
-                    .ok_or(format!("Unknown label '{}'", name))? as i32
-            }
-        };
+        // Resolve the immediate (can be label or number)
+        let imm_val = resolve_memory_offset(offset, sym_table)?;
 
-        // 2. Extract immediate bits (12 bits)
+        // Extract immediate bits (12 bits)
         let imm = (imm_val as u32) & 0xFFF;
         let imm_11_5 = (imm >> 5) & 0x7F; // 7 upper bits
         let imm_4_0 = imm & 0x1F;         // 5 lower bits
 
-        // 3. Pack everything into the 32-bit word
+        // Pack everything into the 32-bit word
         let instruction = (imm_11_5 << 25)      | // imm[11:5]
                           ((*rs2 as u32) << 20) | // rs2
                           ((*reg as u32) << 15) | // rs1 (base register)
@@ -232,6 +244,32 @@ fn encode_s_type(
         Ok(instruction)
     } else {
         Err("Invalid operands for S-type instruction: expected reg, offset(reg)".to_string())
+    }
+}
+
+fn resolve_memory_offset(offset: &MemoryOffset, sym_table: &SymbolTable) -> Result<i32, String> {
+    match offset {
+        MemoryOffset::Immediate(val) => Ok(*val),
+        MemoryOffset::Label(name) => sym_table.get_address(name)
+            .map(|addr| addr as i32)
+            .ok_or_else(|| format!("Unknown label '{}'", name)),
+    }
+}
+
+fn resolve_any_immediate(op: &Operand, sym_table: &SymbolTable) -> Result<i32, String> {
+    match op {
+        // For example in addi x1, x2, 10
+        Operand::Immediate(val) => Ok(*val),
+
+        // For example in addi x1, x2, etiqueta
+        Operand::Label(name) => sym_table.get_address(name)
+            .map(|addr| addr as i32)
+            .ok_or_else(|| format!("Unknown label '{}'", name)),
+
+        // For example in lw x1, 4(x2) o lw x1, etiqueta(x2)
+        Operand::Memory { offset, .. } => resolve_memory_offset(offset, sym_table),
+
+        _ => Err("This operand do not contain a numeric value or a label".to_string()),
     }
 }
 
