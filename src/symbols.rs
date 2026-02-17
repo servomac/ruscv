@@ -114,6 +114,15 @@ impl SymbolTable {
     pub fn get_address(&self, label: &str) -> Option<u32> {
         self.symbols.get(label).cloned()
     }
+
+    pub fn add_label(&mut self, label: String, address: u32) -> Result<(), String> {
+        if self.symbols.contains_key(&label) {
+            Err(format!("Error: Duplicated label '{}'", label))
+        } else {
+            self.symbols.insert(label, address);
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]

@@ -109,29 +109,29 @@ fn encode_instruction(name: &str, ops: &[Operand], sym_table: &SymbolTable, curr
         "or"    => encode_r_type(0x33, 0x6, 0x00, ops),
         "and"   => encode_r_type(0x33, 0x7, 0x00, ops),
 
-        // I-type | Opcode: 0x13 for ALU, 0x03 for Loads, 0x67 for JALR
-        "addi"  => encode_i_type(0x13, 0x0, ops, sym_table, current_pc),
-        "slti"  => encode_i_type(0x13, 0x2, ops, sym_table, current_pc),
-        "sltiu" => encode_i_type(0x13, 0x3, ops, sym_table, current_pc),
-        "xori"  => encode_i_type(0x13, 0x4, ops, sym_table, current_pc),
-        "ori"   => encode_i_type(0x13, 0x6, ops, sym_table, current_pc),
-        "andi"  => encode_i_type(0x13, 0x7, ops, sym_table, current_pc),
+        // I-type | Opcode: 0x13 for ALU, 0x03 for Loads, 0x67 for jalr
+        "addi"  => encode_i_type(0x13, 0x0, ops, sym_table),
+        "slti"  => encode_i_type(0x13, 0x2, ops, sym_table),
+        "sltiu" => encode_i_type(0x13, 0x3, ops, sym_table),
+        "xori"  => encode_i_type(0x13, 0x4, ops, sym_table),
+        "ori"   => encode_i_type(0x13, 0x6, ops, sym_table),
+        "andi"  => encode_i_type(0x13, 0x7, ops, sym_table),
         "slli"  => encode_i_shift(0x13, 0x1, 0x00, ops), // Special: uses shift amount
         "srli"  => encode_i_shift(0x13, 0x5, 0x00, ops),
         "srai"  => encode_i_shift(0x13, 0x5, 0x20, ops),
 
-        "lb"    => encode_i_type(0x03, 0x0, ops, sym_table, current_pc),
-        "lh"    => encode_i_type(0x03, 0x1, ops, sym_table, current_pc),
-        "lw"    => encode_i_type(0x03, 0x2, ops, sym_table, current_pc),
-        "lbu"   => encode_i_type(0x03, 0x4, ops, sym_table, current_pc),
-        "lhu"   => encode_i_type(0x03, 0x5, ops, sym_table, current_pc),
+        "lb"    => encode_i_type(0x03, 0x0, ops, sym_table),
+        "lh"    => encode_i_type(0x03, 0x1, ops, sym_table),
+        "lw"    => encode_i_type(0x03, 0x2, ops, sym_table),
+        "lbu"   => encode_i_type(0x03, 0x4, ops, sym_table),
+        "lhu"   => encode_i_type(0x03, 0x5, ops, sym_table),
 
-        "jalr"  => encode_i_type(0x67, 0x0, ops, sym_table, current_pc),
+        "jalr"  => encode_i_type(0x67, 0x0, ops, sym_table),
 
         // S-type | Opcode: 0x23
-        "sb"    => encode_s_type(0x23, 0x0, ops, sym_table, current_pc),
-        "sh"    => encode_s_type(0x23, 0x1, ops, sym_table, current_pc),
-        "sw"    => encode_s_type(0x23, 0x2, ops, sym_table, current_pc),
+        "sb"    => encode_s_type(0x23, 0x0, ops, sym_table),
+        "sh"    => encode_s_type(0x23, 0x1, ops, sym_table),
+        "sw"    => encode_s_type(0x23, 0x2, ops, sym_table),
 
         // B-type | Opcode: 0x63
         "beq"   => encode_b_type(0x63, 0x0, ops, sym_table, current_pc),
@@ -141,9 +141,9 @@ fn encode_instruction(name: &str, ops: &[Operand], sym_table: &SymbolTable, curr
         "bltu"  => encode_b_type(0x63, 0x6, ops, sym_table, current_pc),
         "bgeu"  => encode_b_type(0x63, 0x7, ops, sym_table, current_pc),
 
-        // TODO U-type | Opcode: 0x37 LUI, 0x17 AUIPC
-        //"lui"   => encode_u_type(0x37, ops, sym_table, current_pc),
-        //"auipc" => encode_u_type(0x17, ops, sym_table, current_pc),
+        // U-type | Opcode: 0x37 lui, 0x17 auipc
+        "lui"   => encode_u_type(0x37, ops, sym_table),
+        "auipc" => encode_u_type(0x17, ops, sym_table),
 
         // J-type | Opcode: 0x6F
         "jal"   => encode_j_type(0x6F, ops, sym_table, current_pc),
@@ -165,7 +165,7 @@ fn encode_r_type(opcode: u8, funct3: u8, funct7: u8, ops: &[Operand]) -> Result<
     }
 }
 
-fn encode_i_type(opcode: u8, funct3: u8, ops: &[Operand], sym_table: &SymbolTable, _current_pc: u32) -> Result<u32, String> {
+fn encode_i_type(opcode: u8, funct3: u8, ops: &[Operand], sym_table: &SymbolTable) -> Result<u32, String> {
     let (rd, rs1, base_op) = match (opcode, ops) {
         // load y jalr: rd, offset(rs1)
         (0x03 | 0x67, [Operand::Register(rd), mem @ Operand::Memory { reg, .. }]) => {
@@ -221,19 +221,20 @@ fn encode_s_type(
     funct3: u8,
     ops: &[Operand],
     sym_table: &SymbolTable,
-    _current_pc: u32
 ) -> Result<u32, String> {
     // Note: The usual order in RISC-V is sw rs2, offset(rs1)
     if let [Operand::Register(rs2), Operand::Memory { offset, reg }] = ops {
         // Resolve the immediate (can be label or number)
         let imm_val = resolve_memory_offset(offset, sym_table)?;
 
-        // Extract immediate bits (12 bits)
+        if imm_val < -2048 || imm_val > 2047 {
+            return Err(format!("Immediate value {} out of range for 12-bit field", imm_val));
+        }
+
         let imm = (imm_val as u32) & 0xFFF;
         let imm_11_5 = (imm >> 5) & 0x7F; // 7 upper bits
         let imm_4_0 = imm & 0x1F;         // 5 lower bits
 
-        // Pack everything into the 32-bit word
         let instruction = (imm_11_5 << 25)      | // imm[11:5]
                           ((*rs2 as u32) << 20) | // rs2
                           ((*reg as u32) << 15) | // rs1 (base register)
@@ -273,29 +274,92 @@ fn resolve_any_immediate(op: &Operand, sym_table: &SymbolTable) -> Result<i32, S
     }
 }
 
-fn encode_b_type(opcode: u8, funct3: u8, ops: &[Operand], _sym_table: &SymbolTable, _current_pc: u32) -> Result<u32, String> {
-    if let [Operand::Register(rs1), Operand::Register(rs2), Operand::Immediate(imm)] = ops {
-        let imm_val = *imm; // TODO review resolve_immediate(*imm, sym_table, current_pc);
-        let imm_12 = (imm_val >> 12) & 0x1;
-        let imm_10_5 = (imm_val >> 5) & 0x3F;
-        let imm_4_1 = (imm_val >> 1) & 0xF;
-        let imm_11 = (imm_val >> 11) & 0x1;
-        Ok(((imm_12 as u32) << 31) | ((imm_10_5 as u32) << 25) | ((*rs2 as u32) << 20) | ((*rs1 as u32) << 15) | ((funct3 as u32) << 12) | ((imm_4_1 as u32) << 8) | ((imm_11 as u32) << 7) | (opcode as u32))
+fn encode_b_type(opcode: u8, funct3: u8, ops: &[Operand], sym_table: &SymbolTable, current_pc: u32) -> Result<u32, String> {
+    if let [Operand::Register(rs1), Operand::Register(rs2), Operand::Label(label)] = ops {
+        let label_addr = sym_table.get_address(label)
+                .ok_or_else(|| format!("Unknown label '{}'", label))?;
+        let offset = (label_addr as i32) - (current_pc as i32);
+        if offset < -4096 || offset > 4094 {
+            return Err(format!("Branch target offset {} out of range", offset));
+        }
+        if offset % 2 != 0 {
+            return Err(format!("Branch target offset {} must be a multiple of 2", offset));
+        }
+
+        let imm = offset as u32;
+        let b12    = (imm >> 12) & 0x1;
+        let b11    = (imm >> 11) & 0x1;
+        let b10_5  = (imm >> 5)  & 0x3F;
+        let b4_1   = (imm >> 1)  & 0xF;
+
+        let instruction = (b12 << 31)   |
+                          (b10_5 << 25) |
+                          ((*rs2 as u32) << 20) |
+                          ((*rs1 as u32) << 15) |
+                          ((funct3 as u32) << 12) |
+                          (b4_1 << 8)   |
+                          (b11 << 7)    |
+                          (opcode as u32);
+
+        Ok(instruction)
     } else {
-        Err("Invalid operands for B-type instruction: expected register, register, immediate".to_string())
+        Err("Invalid operands for B-type instruction: expected register, register, label".to_string())
     }
 }
 
-fn encode_j_type(opcode: u8, ops: &[Operand], _sym_table: &SymbolTable, _current_pc: u32) -> Result<u32, String> {
-    if let [Operand::Register(rd), Operand::Immediate(imm)] = ops {
-        let imm_val = *imm; // TODO review resolve_immediate(*imm, sym_table, current_pc);
-        let imm_20 = (imm_val >> 20) & 0x1;
-        let imm_10_1 = (imm_val >> 1) & 0x3FF;
-        let imm_11 = (imm_val >> 11) & 0x1;
-        let imm_19_12 = (imm_val >> 12) & 0xFF;
-        Ok(((imm_20 as u32) << 31) | ((imm_19_12 as u32) << 12) | ((imm_11 as u32) << 20) | ((imm_10_1 as u32) << 21) | ((*rd as u32) << 7) | (opcode as u32))
+fn encode_u_type(
+    opcode: u8,
+    ops: &[Operand],
+    sym_table: &SymbolTable,
+) -> Result<u32, String> {
+    if let [Operand::Register(rd), imm_op] = ops {
+        let val = match imm_op {
+            Operand::Immediate(imm) => *imm,
+            Operand::Label(name) => sym_table.get_address(name)
+                .ok_or(format!("Unknown label '{}'", name))? as i32,
+            _ => return Err("Invalid operand: expected immediate or label".to_string()),
+        };
+        // TODO review this because i'm not completely sure how the U-immediate is represented in the instruction encoding
+        let imm_u32 = val as u32;
+        Ok((imm_u32 << 12) | ((*rd as u32) << 7) | (opcode as u32))
     } else {
-        Err("Invalid operands for J-type instruction: expected register, immediate".to_string())
+        Err("Invalid operands for U-type instruction: expected register, immediate/label".to_string())
+    }
+}
+
+fn encode_j_type(
+    opcode: u8,
+    ops: &[Operand],
+    sym_table: &SymbolTable,
+    current_pc: u32
+) -> Result<u32, String> {
+    if let [Operand::Register(rd), imm_op] = ops {
+        let val = match imm_op {
+            Operand::Immediate(imm) => *imm,
+            Operand::Label(name) => sym_table.get_address(name)
+                .ok_or(format!("Unknown label '{}'", name))? as i32,
+            _ => return Err("Invalid operand: expected immediate or label".to_string()),
+        };
+        let offset = (val as i32) - (current_pc as i32);
+
+        if offset < -1048576 || offset > 1048574 {
+            return Err(format!("Jump target offset {} out of range", offset));
+        }
+
+        let imm_20 = (offset >> 20) & 0x1;
+        let imm_10_1 = (offset >> 1) & 0x3FF;
+        let imm_11 = (offset >> 11) & 0x1;
+        let imm_19_12 = (offset >> 12) & 0xFF;
+
+        let instruction = ((imm_20 as u32) << 31)   |
+                          ((imm_19_12 as u32) << 12) |
+                          ((imm_11 as u32) << 20)   |
+                          ((imm_10_1 as u32) << 21) |
+                          ((*rd as u32) << 7) |
+                          (opcode as u32);
+        Ok(instruction)
+    } else {
+        Err("Invalid operands for J-type instruction: expected register, immediate/label".to_string())
     }
 }
 
@@ -705,6 +769,70 @@ mod tests {
                 0b11010101, // 213 (rs1[0]=1 + funct3=101 + rd[4:1]=0101)
                 0b01000101, // 69  (shamt[3:0]=0100 + rs1[4:1]=0101)
                 0b01000000, // 64  (funct7=0100000 + shamt[4]=0)
+            ]
+        );
+    }
+
+    #[test]
+    fn test_encoding_of_b_type_instruction() {
+        let mut assembler = Assembler::new();
+        let mut sym_table = SymbolTable::new();
+        sym_table.add_label("target".to_string(), 0x0040_0010).unwrap();
+        let statements = vec![
+            Statement {
+                kind: StatementKind::Instruction("beq".to_string(), vec![
+                    Operand::Register(1),
+                    Operand::Register(2),
+                    Operand::Label("target".to_string()),
+                ]),
+                line: 1,
+            },
+        ];
+
+        let result = assembler.assemble(&statements, &sym_table);
+        assert!(result.is_ok());
+        let instructions = assembler.text_bin;
+        assert_eq!(instructions.len(), 4);
+        // beq x1, x2, target (offset = target - current_pc = 0x0040_0010 - 0x0040_0000 = 16)
+        // opcode=0x63, funct3=0x0, rs1=1, rs2=2, imm=16
+        assert_eq!(
+            instructions,
+            vec![
+                0b01100011, // 0x63: imm[11] + opcode
+                0b10001000, // 0x88: rs1[0] + funct3 + imm[4:1]
+                0b00100000, // 0x20: rs2[3:0] + rs1[4:1]
+                0b00000000, // 0x00: imm[12] + imm[10:5] + rs2[4]
+            ]
+        );
+    }
+
+    #[test]
+    fn test_encoding_of_u_type_instruction() {
+        let mut assembler = Assembler::new();
+        let sym_table = SymbolTable::new();
+        let statements = vec![
+            Statement {
+                kind: StatementKind::Instruction("lui".to_string(), vec![
+                    Operand::Register(5),
+                    Operand::Immediate(0xF1),
+                ]),
+                line: 1,
+            },
+        ];
+
+        let result = assembler.assemble(&statements, &sym_table);
+        assert!(result.is_ok());
+        let instructions = assembler.text_bin;
+        assert_eq!(instructions.len(), 4);
+        // lui x5, 0x12345
+        // opcode=0x37, rd=5, imm=0xF1
+        assert_eq!(
+            instructions,
+            vec![
+                0b10110111, // 0x37: rd[0] + opcode
+                0b00010010, // 0x00: imm[19:12] + rd[4:1]
+                0b00001111, // 0x00: imm[11:4]
+                0b00000000, // 0x00: imm[31:20]
             ]
         );
     }
