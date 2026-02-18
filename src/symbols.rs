@@ -3,19 +3,20 @@ use crate::parser::{Statement, StatementKind, Operand};
 
 pub struct SymbolTable {
     symbols: HashMap<String, u32>,
+    text_base: u32,
+    data_base: u32,
 }
 
 impl SymbolTable {
-    pub fn new() -> Self {
+    pub fn new(text_base: u32, data_base: u32) -> Self {
         Self {
             symbols: HashMap::new(),
+            text_base,
+            data_base,
         }
     }
 
     pub fn build(&mut self, statements: &[Statement]) -> Result<(), String> {
-        let text_base: u32 = 0x0040_0000;
-        let data_base: u32 = 0x1001_0000;
-
         let mut text_offset: u32 = 0;
         let mut data_offset: u32 = 0;
 
@@ -28,14 +29,15 @@ impl SymbolTable {
                 }
 
                 StatementKind::Label(name) => {
+                    // TODO: use add_label
                     if self.symbols.contains_key(name) {
                         return Err(format!("Error: Duplicated label '{}'", name));
                     }
 
                     let address = if current_section == ".text" {
-                        text_base + text_offset
+                        self.text_base + text_offset
                     } else {
-                        data_base + data_offset
+                        self.data_base + data_offset
                     };
 
                     self.symbols.insert(name.clone(), address);
@@ -52,9 +54,9 @@ impl SymbolTable {
 
                 StatementKind::Directive(name, operands) => {
                     let current_pc = if current_section == ".text" {
-                        text_base + text_offset
+                        self.text_base + text_offset
                     } else {
-                        data_base + data_offset
+                        self.data_base + data_offset
                     };
 
                     let size = self.calculate_directive_size(name, operands, current_pc)?;
@@ -131,6 +133,7 @@ mod tests {
     use crate::parser::Parser;
 
     use super::*;
+    use crate::config;
 
     #[test]
     fn test_symbol_table() {
@@ -152,14 +155,14 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let statements = parser.parse().unwrap();
 
-        let mut sym_table = SymbolTable::new();
+        let mut sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         sym_table.build(&statements).unwrap();
 
-        assert_eq!(sym_table.get_address("main"), Some(0x0040_0000));
-        assert_eq!(sym_table.get_address("final"), Some(0x0040_0004)); // 4 bytes for the instruction
-        assert_eq!(sym_table.get_address("msg"), Some(0x1001_0000));
-        assert_eq!(sym_table.get_address("num"), Some(0x1001_0004)); // 3 bytes for the string "Hi!" + 1 for \0
-        assert_eq!(sym_table.get_address("text"), Some(0x1001_0004 + 4)); // 4 bytes for the word
+        assert_eq!(sym_table.get_address("main"), Some(config::TEXT_BASE));
+        assert_eq!(sym_table.get_address("final"), Some(config::TEXT_BASE + 4)); // 4 bytes for the instruction
+        assert_eq!(sym_table.get_address("msg"), Some(config::DATA_BASE));
+        assert_eq!(sym_table.get_address("num"), Some(config::DATA_BASE + 4)); // 3 bytes for the string "Hi!" + 1 for \0
+        assert_eq!(sym_table.get_address("text"), Some(config::DATA_BASE + 4 + 4)); // 4 bytes for the word
     }
 
     #[test]
@@ -175,9 +178,9 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let statements = parser.parse().unwrap();
 
-        let mut sym_table = SymbolTable::new();
+        let mut sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         sym_table.build(&statements).unwrap();
 
-        assert_eq!(sym_table.get_address("my_aligned_label"), Some(0x1001_0010)) // 3 for "Hi" + 1 for \0, then aligned to 4 bytes
+        assert_eq!(sym_table.get_address("my_aligned_label"), Some(config::DATA_BASE + 0x10)) // 3 for "Hi" + 1 for \0, then aligned to 4 bytes
     }
 }

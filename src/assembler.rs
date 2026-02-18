@@ -29,20 +29,24 @@ pub struct Assembler {
     pub text_bin: Vec<u8>,
     pub data_bin: Vec<u8>,
     pub debug_info: DebugInfo,
+    pub text_base: u32,
+    pub data_base: u32,
 }
 
 impl Assembler {
-    pub fn new() -> Self {
+    pub fn new(text_base: u32, data_base: u32) -> Self {
         Self {
             text_bin: Vec::new(),
             data_bin: Vec::new(),
             debug_info: DebugInfo { address_to_source: HashMap::new() },
+            text_base,
+            data_base,
         }
     }
 
     pub fn assemble(&mut self, statements: &[Statement], sym_table: &SymbolTable) -> Result<(), Vec<AssemblerError>> {
-        let mut current_pc = 0x0040_0000; // TODO duplicated in symbols.rs
-        let mut data_pc = 0x1001_0000;
+        let mut current_pc = self.text_base;
+        let mut data_pc = self.data_base;
         let mut current_section = ".text";
         let mut errors = Vec::new();
 
@@ -379,11 +383,12 @@ fn emit_data_bytes(name: &str, ops: &[Operand]) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config;
 
     #[test]
     fn test_assemble_simple_program() {
-        let mut assembler = Assembler::new();
-        let sym_table = SymbolTable::new();
+        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
                 kind: StatementKind::Instruction("add".to_string(), vec![
@@ -422,8 +427,8 @@ mod tests {
 
     #[test]
     fn test_unsupported_instruction() {
-        let mut assembler = Assembler::new();
-        let sym_table = SymbolTable::new();
+        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
                 kind: StatementKind::Instruction("mul".to_string(), vec![
@@ -445,8 +450,8 @@ mod tests {
 
     #[test]
     fn test_invalid_r_type_operands() {
-        let mut assembler = Assembler::new();
-        let sym_table = SymbolTable::new();
+        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
                 kind: StatementKind::Instruction("add".to_string(), vec![
@@ -468,8 +473,8 @@ mod tests {
 
     #[test]
     fn test_invalid_i_type_operands() {
-        let mut assembler = Assembler::new();
-        let sym_table = SymbolTable::new();
+        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
                 kind: StatementKind::Instruction("lw".to_string(), vec![
@@ -491,8 +496,8 @@ mod tests {
 
     #[test]
     fn test_invalid_s_type_operands() {
-        let mut assembler = Assembler::new();
-        let sym_table = SymbolTable::new();
+        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
                 kind: StatementKind::Instruction("sw".to_string(), vec![
@@ -513,8 +518,8 @@ mod tests {
 
     #[test]
     fn test_invalid_b_type_operands() {
-        let mut assembler = Assembler::new();
-        let sym_table = SymbolTable::new();
+        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
                 kind: StatementKind::Instruction("beq".to_string(), vec![
@@ -536,8 +541,8 @@ mod tests {
 
     #[test]
     fn test_invalid_j_type_operands() {
-        let mut assembler = Assembler::new();
-        let sym_table = SymbolTable::new();
+        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
                 kind: StatementKind::Instruction("jal".to_string(), vec![
@@ -557,8 +562,8 @@ mod tests {
 
     #[test]
     fn test_unsupported_directive() {
-        let mut assembler = Assembler::new();
-        let sym_table = SymbolTable::new();
+        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
                 kind: StatementKind::Directive(".float".to_string(), vec![
@@ -578,8 +583,8 @@ mod tests {
 
     #[test]
     fn test_invalid_directive_operands() {
-        let mut assembler = Assembler::new();
-        let sym_table = SymbolTable::new();
+        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
                 kind: StatementKind::Directive(".word".to_string(), vec![
@@ -599,8 +604,8 @@ mod tests {
 
     #[test]
     fn test_multiple_errors() {
-        let mut assembler = Assembler::new();
-        let sym_table = SymbolTable::new();
+        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
                 kind: StatementKind::Instruction("mul".to_string(), vec![
@@ -652,8 +657,8 @@ mod tests {
 
     #[test]
     fn test_assemble_i_type_instruction() {
-        let mut assembler = Assembler::new();
-        let sym_table = SymbolTable::new();
+        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
                 kind: StatementKind::Instruction("addi".to_string(), vec![
@@ -685,8 +690,8 @@ mod tests {
 
     #[test]
     fn test_assemble_i_type_instruction_with_negative_immediate() {
-        let mut assembler = Assembler::new();
-        let sym_table = SymbolTable::new();
+        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
                 kind: StatementKind::Instruction("addi".to_string(), vec![
@@ -718,8 +723,8 @@ mod tests {
 
     #[test]
     fn test_s_instruction_with_unknown_label() {
-        let mut assembler = Assembler::new();
-        let sym_table = SymbolTable::new();
+        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
                 kind: StatementKind::Instruction("sw".to_string(), vec![
@@ -743,8 +748,8 @@ mod tests {
 
     #[test]
     fn test_encoding_of_i_shift_instruction() {
-        let mut assembler = Assembler::new();
-        let sym_table = SymbolTable::new();
+        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
                 kind: StatementKind::Instruction("srai".to_string(), vec![
@@ -775,9 +780,9 @@ mod tests {
 
     #[test]
     fn test_encoding_of_b_type_instruction() {
-        let mut assembler = Assembler::new();
-        let mut sym_table = SymbolTable::new();
-        sym_table.add_label("target".to_string(), 0x0040_0010).unwrap();
+        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let mut sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
+        sym_table.add_label("target".to_string(), config::TEXT_BASE + 0x10).unwrap();
         let statements = vec![
             Statement {
                 kind: StatementKind::Instruction("beq".to_string(), vec![
@@ -808,8 +813,8 @@ mod tests {
 
     #[test]
     fn test_encoding_of_u_type_instruction() {
-        let mut assembler = Assembler::new();
-        let sym_table = SymbolTable::new();
+        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
                 kind: StatementKind::Instruction("lui".to_string(), vec![
