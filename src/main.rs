@@ -1,5 +1,4 @@
 mod config;
-
 mod lexer;
 
 mod parser;

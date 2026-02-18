@@ -154,7 +154,7 @@ impl Parser {
         Ok(nodes)
     }
 
-    pub fn parse_line(&mut self) -> Result<Option<Statement>, String> {
+    fn parse_line(&mut self) -> Result<Option<Statement>, String> {
         if self.is_at_end() { return Ok(None); }
 
         let current_token = self.peek().clone();

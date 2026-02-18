@@ -29,18 +29,13 @@ impl SymbolTable {
                 }
 
                 StatementKind::Label(name) => {
-                    // TODO: use add_label
-                    if self.symbols.contains_key(name) {
-                        return Err(format!("Error: Duplicated label '{}'", name));
-                    }
-
                     let address = if current_section == ".text" {
                         self.text_base + text_offset
                     } else {
                         self.data_base + data_offset
                     };
 
-                    self.symbols.insert(name.clone(), address);
+                    self.add_label(name.clone(), address)?;
                 }
 
                 StatementKind::Instruction(_, _) => {
@@ -166,13 +161,13 @@ mod tests {
     }
 
     #[test]
-    fn text_symbol_table_with_align() {
-        let source = "
+    fn test_symbol_table_with_align() {
+        let source = r#"
             .data
-            .string \"Hi\"
+            .string "Hi"
             .align 4
             my_aligned_label: .byte 0xFF
-        ";
+        "#;
 
         let tokens = tokenize(source);
         let mut parser = Parser::new(tokens);
@@ -182,5 +177,21 @@ mod tests {
         sym_table.build(&statements).unwrap();
 
         assert_eq!(sym_table.get_address("my_aligned_label"), Some(config::DATA_BASE + 0x10)) // 3 for "Hi" + 1 for \0, then aligned to 4 bytes
+    }
+
+    #[test]
+    fn test_duplicated_label() {
+        let source = r#"
+            .data
+            msg: .asciz "Hi!"
+            msg: .asciz "Hello!"
+        "#;
+
+        let tokens = tokenize(source);
+        let mut parser = Parser::new(tokens);
+        let statements = parser.parse().unwrap();
+
+        let mut sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
+        assert!(sym_table.build(&statements).is_err());
     }
 }
