@@ -128,10 +128,10 @@ impl Processor {
     fn decode(&self, memory_instruction: u32) -> Result<Instruction, StepError> {
         let opcode = memory_instruction & 0x7F;
 
-        println!("Opcode is {:#}", opcode);
         // TODO other opcodes
         match opcode {
             0b0110011 => self.decode_r_type(memory_instruction),
+            0b0010011 => self.decode_i_type(memory_instruction),
             _ => Err(StepError::IllegalInstruction),
         }
     }
@@ -144,10 +144,49 @@ impl Processor {
         let func3 = (memory_instruction >> 12) & 0x7;
         let func7 = (memory_instruction >> 25) & 0x7F;
 
-        // TODO other instructions
         match (func3, func7) {
             (0x0, 0x0) => Ok(Instruction::Add { rd, rs1, rs2 }),
             (0x0, 0x20) => Ok(Instruction::Sub { rd, rs1, rs2 }),
+            (0x4, 0x00) => Ok(Instruction::Xor { rd, rs1, rs2 }),
+            (0x6, 0x00) => Ok(Instruction::Or { rd, rs1, rs2 }),
+            (0x8, 0x00) => Ok(Instruction::And { rd, rs1, rs2 }),
+            (0x1, 0x00) => Ok(Instruction::Sll { rd, rs1, rs2 }),
+            (0x5, 0x00) => Ok(Instruction::Srl { rd, rs1, rs2 }),
+            (0x5, 0x20) => Ok(Instruction::Sra { rd, rs1, rs2 }),
+            (0x2, 0x00) => Ok(Instruction::Slt { rd, rs1, rs2 }),
+            (0x3, 0x00) => Ok(Instruction::Sltu { rd, rs1, rs2 }),
+            _ => Err(StepError::IllegalInstruction),
+        }
+    }
+
+    fn decode_i_type(&self, memory_instruction: u32) -> Result<Instruction, StepError> {
+        let rd = ((memory_instruction >> 7) & 0x1F) as usize;
+        let rs1 = ((memory_instruction >> 15) & 0x1F) as usize;
+        let imm = ((memory_instruction >> 20) & 0xFFF) as i32;
+
+        let func3 = (memory_instruction >> 12) & 0x7;
+
+        match func3 {
+            0x0 => Ok(Instruction::Addi { rd, rs1, imm }),
+            0x4 => Ok(Instruction::Xori { rd, rs1, imm }),
+            0x6 => Ok(Instruction::Ori { rd, rs1, imm }),
+            0x7 => Ok(Instruction::Andi { rd, rs1, imm }),
+            0x1 => self.decode_i_shift(func3, rd, rs1, imm),
+            0x5 => self.decode_i_shift(func3, rd, rs1, imm),
+            0x2 => Ok(Instruction::Slti { rd, rs1, imm }),
+            0x3 => Ok(Instruction::Sltiu { rd, rs1, imm }),
+            _ => Err(StepError::IllegalInstruction),
+        }
+    }
+
+    fn decode_i_shift(&self, func3: u32, rd: usize, rs1: usize, imm: i32) -> Result<Instruction, StepError> {
+        let shamt = (imm & 0x1F) as u32;
+        let func7 = (imm >> 5) & 0x7F; // imm[5:11]
+
+        match (func3, func7) {
+            (0x1, 0x0) => Ok(Instruction::Slli { rd, rs1, shamt }),
+            (0x5, 0x0) => Ok(Instruction::Srli { rd, rs1, shamt }),
+            (0x5, 0x20) => Ok(Instruction::Srai { rd, rs1, shamt }),
             _ => Err(StepError::IllegalInstruction),
         }
     }
