@@ -17,7 +17,7 @@ pub struct Processor {
     memory: Memory,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum StepError {
     IllegalInstruction,
     MemoryFault,    // TODO which memory fault type?
@@ -310,8 +310,77 @@ impl Processor {
     }
 
     fn execute(&mut self, instruction: Instruction) -> Result<(), StepError> {
-        // TODO
+        let mut next_pc = self.pc.wrapping_add(4);
+
+        // TODO: implement pending instructions
+        match instruction {
+            Instruction::Add { rd, rs1, rs2 } => {
+                // wrapping_add allows us not to panic on overflows and maintain the semantic of risc-v
+                // returns (a + b) mod 2^N
+                let result = self.read_register(rs1).wrapping_add(self.read_register(rs2));
+                self.write_register(rd, result);
+            },
+            Instruction::Sub { rd, rs1, rs2 } => {
+                let result = self.read_register(rs1).wrapping_sub(self.read_register(rs2));
+                self.write_register(rd, result);
+            },
+            Instruction::Or { rd, rs1, rs2 } => {
+                self.write_register(rd, self.read_register(rs1) | self.read_register(rs2));
+            },
+            Instruction::And { rd, rs1, rs2 } => {
+                self.write_register(rd, self.read_register(rs1) & self.read_register(rs2));
+            },
+            Instruction::Xor { rd, rs1, rs2 } => {
+                self.write_register(rd, self.read_register(rs1) ^ self.read_register(rs2));
+            },
+            Instruction::Sll { rd, rs1, rs2 } => {
+                // Shift logical left on the value in register rs1 by the shift amount held in the lower 5 bits of register rs2
+                let shamt = self.read_register(rs2) & 0x1F;
+                self.write_register(rd, self.read_register(rs1) << shamt);
+            },
+            Instruction::Srl { rd, rs1, rs2 } => {
+                // Shift logical right
+                let shamt = self.read_register(rs2) & 0x1F;
+                self.write_register(rd, self.read_register(rs1) >> shamt);
+            },
+            Instruction::Sra { rd, rs1, rs2 } => {
+                // Shift right arithmetic
+                let shamt = self.read_register(rs2) & 0x1F;
+                let result = (self.read_register(rs1) as i32) >> shamt; // i32 >> is arithmetic
+                self.write_register(rd, result as u32);
+            },
+            Instruction::Slt { rd, rs1, rs2 } => {
+                let result = if (self.read_register(rs1) as i32) < (self.read_register(rs2) as i32) { 1 } else { 0 };
+                self.write_register(rd, result);
+            },
+            Instruction::Sltu { rd, rs1, rs2 } => {
+                let result = if self.read_register(rs1) < self.read_register(rs2) { 1 } else { 0 };
+                self.write_register(rd, result);
+            },
+            Instruction::Addi { rd, rs1, imm } => {
+                // casting i32 to u32 preserves the bit pattern
+                let result = self.read_register(rs1).wrapping_add(imm as u32);
+                self.write_register(rd, result);
+            },
+            _ => return Err(StepError::IllegalInstruction),
+        }
+
+        self.pc = next_pc;
         Ok(())
+    }
+
+    fn read_register(&self, index: usize) -> u32 {
+        if index == 0 {
+            return 0;
+        }
+        self.registers[index]
+    }
+
+    fn write_register(&mut self, index: usize, value: u32) {
+        if index == 0 {
+            return;
+        }
+        self.registers[index] = value;
     }
 
     pub fn show_state(&self) {
@@ -420,5 +489,120 @@ mod tests {
         // 0100000 00101 00010 101 00001 0010011 => 0x40515093
         let instruction = processor.decode(0x40515093).unwrap();
         assert_eq!(instruction, Instruction::Srai { rd: 1, rs1: 2, shamt: 5 });
+    }
+
+    #[test]
+    fn test_decode_shift_max_shamt() {
+        let processor = Processor::new(0, 0, 0, 0);
+        // slli x1, x2, 31  — maximum meaningful shift for 32-bit registers
+        // funct7=0000000 | shamt=11111 | rs1=00010 | funct3=001 | rd=00001 | op=0010011
+        // 0x01F11093
+        let instruction = processor.decode(0x01F11093).unwrap();
+        assert_eq!(instruction, Instruction::Slli { rd: 1, rs1: 2, shamt: 31 });
+    }
+
+    #[test]
+    fn test_decode_shift_invalid_func7() {
+        let processor = Processor::new(0, 0, 0, 0);
+        // srli with funct7=0x10 (invalid — only 0x00 and 0x20 are valid for funct3=0x5)
+        // funct7=0010000 | shamt=00100 | rs1=00010 | funct3=101 | rd=00001 | op=0010011
+        // 0x20415093
+        let result = processor.decode(0x20415093);
+        assert_eq!(result, Err(StepError::IllegalInstruction));
+    }
+
+    #[test]
+    fn test_execute_add() {
+        let mut processor = Processor::new(0, 0, 0, 0);
+        processor.registers[1] = 10;
+        processor.registers[2] = -20i32 as u32;
+        let instruction = Instruction::Add { rd: 3, rs1: 1, rs2: 2 };
+        processor.execute(instruction).unwrap();
+        assert_eq!(processor.registers[3], -10i32 as u32);
+    }
+
+    #[test]
+    fn test_execute_and() {
+        let mut processor = Processor::new(0, 0, 0, 0);
+        processor.registers[1] = 0b1100;
+        processor.registers[2] = 0b1010;
+        let instruction = Instruction::And { rd: 3, rs1: 1, rs2: 2 };
+        processor.execute(instruction).unwrap();
+        assert_eq!(processor.registers[3], 0b1000);
+    }
+
+    #[test]
+    fn test_execute_x0() {
+        let mut processor = Processor::new(0, 0, 0, 0);
+        processor.registers[1] = 10;
+        processor.registers[2] = 20;
+        // Instruction that tries to write to x0
+        let instruction = Instruction::Add { rd: 0, rs1: 1, rs2: 2 };
+        processor.execute(instruction).unwrap();
+        assert_eq!(processor.registers[0], 0);
+    }
+
+    #[test]
+    fn test_step_pc_increment() {
+        let mut processor = Processor::new(0x400000, 0, 0, 0);
+        // add x3, x1, x2 (0x002081B3)
+        processor.memory.text = vec![0xB3, 0x81, 0x20, 0x00];
+        processor.pc = 0x400000;
+
+        processor.step().unwrap();
+        assert_eq!(processor.pc, 0x400000 + 4);
+    }
+
+    #[test]
+    fn test_execute_slt_negative() {
+        let mut processor = Processor::new(0, 0, 0, 0);
+        // x1 = 2, x2 = 1 → x1 > x2 signed → rd = 0
+        processor.registers[1] = 2;
+        processor.registers[2] = 1;
+        processor.execute(Instruction::Slt { rd: 3, rs1: 1, rs2: 2 }).unwrap();
+        assert_eq!(processor.registers[3], 0);
+    }
+
+    #[test]
+    fn test_execute_slt_signed_vs_unsigned() {
+        let mut processor = Processor::new(0, 0, 0, 0);
+        // x1 = -1 (0xFFFFFFFF), x2 = 1
+        // signed: -1 < 1 → rd = 1  (this is the key difference with sltu)
+        processor.registers[1] = 0xFFFFFFFF;
+        processor.registers[2] = 1;
+        processor.execute(Instruction::Slt { rd: 3, rs1: 1, rs2: 2 }).unwrap();
+        assert_eq!(processor.registers[3], 1);
+    }
+
+    #[test]
+    fn test_execute_slt_equal() {
+        let mut processor = Processor::new(0, 0, 0, 0);
+        // x1 == x2 → rd = 0 (strictly less than)
+        processor.registers[1] = 5;
+        processor.registers[2] = 5;
+        processor.execute(Instruction::Slt { rd: 3, rs1: 1, rs2: 2 }).unwrap();
+        assert_eq!(processor.registers[3], 0);
+    }
+
+    #[test]
+    fn test_execute_sltu_signed_vs_unsigned() {
+        let mut processor = Processor::new(0, 0, 0, 0);
+        // x1 = 0xFFFFFFFF, x2 = 1
+        // unsigned: 0xFFFFFFFF > 1 → rd = 0  (opposite of slt!)
+        processor.registers[1] = 0xFFFFFFFF;
+        processor.registers[2] = 1;
+        processor.execute(Instruction::Sltu { rd: 3, rs1: 1, rs2: 2 }).unwrap();
+        assert_eq!(processor.registers[3], 0);
+    }
+
+    #[test]
+    fn test_execute_sltu_positive() {
+        let mut processor = Processor::new(0, 0, 0, 0);
+        // x1 = 1, x2 = 0xFFFFFFFF
+        // unsigned: 1 < 0xFFFFFFFF → rd = 1
+        processor.registers[1] = 1;
+        processor.registers[2] = 0xFFFFFFFF;
+        processor.execute(Instruction::Sltu { rd: 3, rs1: 1, rs2: 2 }).unwrap();
+        assert_eq!(processor.registers[3], 1);
     }
 }
