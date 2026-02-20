@@ -362,6 +362,41 @@ impl Processor {
                 let result = self.read_register(rs1).wrapping_add(imm as u32);
                 self.write_register(rd, result);
             },
+            Instruction::Xori { rd, rs1, imm } => {
+                let result = self.read_register(rs1) ^ imm as u32;
+                self.write_register(rd, result);
+            },
+            Instruction::Ori { rd, rs1, imm } => {
+                let result = self.read_register(rs1) | imm as u32;
+                self.write_register(rd, result);
+            },
+            Instruction::Andi { rd, rs1, imm } => {
+                let result = self.read_register(rs1) & imm as u32;
+                self.write_register(rd, result);
+            },
+            Instruction::Slli { rd, rs1, shamt } => {
+                // shamt is already only the bits[0:4], masked in the decode
+                let result = self.read_register(rs1) << shamt;
+                self.write_register(rd, result);
+            },
+            Instruction::Srli { rd, rs1, shamt } => {
+                // u32 >> is logical shift, fills with zeros
+                let result = self.read_register(rs1) >> shamt;
+                self.write_register(rd, result);
+            },
+            Instruction::Srai { rd, rs1, shamt } => {
+                // i32 >> is arithmetic shift, fills with sign bit
+                let result = (self.read_register(rs1) as i32) >> shamt;
+                self.write_register(rd, result as u32);
+            },
+            Instruction::Slti { rd, rs1, imm } => {
+                let result = if (self.read_register(rs1) as i32) < imm { 1 } else { 0 };
+                self.write_register(rd, result);
+            },
+            Instruction::Sltiu { rd, rs1, imm } => {
+                let result = if self.read_register(rs1) < imm as u32 { 1 } else { 0 };
+                self.write_register(rd, result);
+            },
             _ => return Err(StepError::IllegalInstruction),
         }
 
