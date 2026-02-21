@@ -15,8 +15,8 @@ struct Memory {
 #[derive(Debug, PartialEq)]
 enum MemoryFault {
     OutOfBounds { address: u32 },
-    WriteToReadOnly { address: u32 },
-    UnalignedAccess { address: u32 },
+    WriteToReadOnly { address: u32 },           // TODO
+    UnalignedAccess { address: u32 },           // TODO
     ExecuteFromNonExecutable { address: u32 }, // TODO: check in fetch
 }
 
@@ -562,6 +562,17 @@ impl Processor {
                     next_pc = self.pc.wrapping_add(imm as u32);
                 }
             },
+            Instruction::Jal { rd, imm } => {
+                // rd = PC+4; PC += imm
+                self.write_register(rd, self.pc.wrapping_add(4));
+                next_pc = self.pc.wrapping_add(imm as u32);
+            },
+            Instruction::Jalr { rd, rs1, imm } => {
+                // rd = PC+4; PC = rs1 + imm
+                self.write_register(rd, self.pc.wrapping_add(4));
+                // The & !1 masks out bit 0, ensuring the target is always 2-byte aligned
+                next_pc = self.read_register(rs1).wrapping_add(imm as u32) & !1;
+            },
             _ => return Err(StepError::IllegalInstruction),
         }
 
@@ -882,5 +893,42 @@ mod tests {
         p.pc = 0;
         p.execute(Instruction::Bltu { rs1: 1, rs2: 2, imm: 8 }).unwrap();
         assert_eq!(p.pc, 4); // branch NOT taken, 0xFFFFFFFF > 1 unsigned
+    }
+
+    #[test]
+    fn test_jal_saves_return_address_and_jumps() {
+        let mut p = Processor::new(0, 0, 0, 0);
+        p.pc = 0x100;
+        p.execute(Instruction::Jal { rd: 1, imm: 16 }).unwrap();
+        assert_eq!(p.read_register(1), 0x104); // return address = PC+4
+        assert_eq!(p.pc, 0x110);               // PC = old PC + imm
+    }
+
+    #[test]
+    fn test_jal_negative_offset() {
+        let mut p = Processor::new(0, 0, 0, 0);
+        p.pc = 0x100;
+        p.execute(Instruction::Jal { rd: 1, imm: -4 }).unwrap();
+        assert_eq!(p.read_register(1), 0x104);
+        assert_eq!(p.pc, 0xFC);
+    }
+
+    #[test]
+    fn test_jalr_saves_return_address_and_jumps() {
+        let mut p = Processor::new(0, 0, 0, 0);
+        p.pc = 0x100;
+        p.write_register(2, 0x200);
+        p.execute(Instruction::Jalr { rd: 1, rs1: 2, imm: 4 }).unwrap();
+        assert_eq!(p.read_register(1), 0x104); // return address = PC+4
+        assert_eq!(p.pc, 0x204);              // PC = rs1 + imm
+    }
+
+    #[test]
+    fn test_jalr_clears_lsb() {
+        let mut p = Processor::new(0, 0, 0, 0);
+        p.pc = 0x100;
+        p.write_register(2, 0x200);
+        p.execute(Instruction::Jalr { rd: 1, rs1: 2, imm: 1 }).unwrap(); // rs1 + imm = 0x201
+        assert_eq!(p.pc, 0x200); // LSB cleared → 0x200
     }
 }
