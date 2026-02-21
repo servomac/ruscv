@@ -526,6 +526,42 @@ impl Processor {
                 let address = self.read_register(rs1).wrapping_add(imm as u32);
                 self.memory.write_word(address, self.read_register(rs2))?;
             },
+            Instruction::Beq { rs1, rs2, imm } => {
+                // if(rs1 == rs2) PC += imm
+                if self.read_register(rs1) == self.read_register(rs2) {
+                    next_pc = self.pc.wrapping_add(imm as u32);
+                }
+            },
+            Instruction::Bne { rs1, rs2, imm } => {
+                // if(rs1 != rs2) PC += imm
+                if self.read_register(rs1) != self.read_register(rs2) {
+                    next_pc = self.pc.wrapping_add(imm as u32);
+                }
+            },
+            Instruction::Blt { rs1, rs2, imm } => {
+                // if(rs1 < rs2) PC += imm
+                if (self.read_register(rs1) as i32) < (self.read_register(rs2) as i32) {
+                    next_pc = self.pc.wrapping_add(imm as u32);
+                }
+            },
+            Instruction::Bge { rs1, rs2, imm } => {
+                // if(rs1 >= rs2) PC += imm
+                if (self.read_register(rs1) as i32) >= (self.read_register(rs2) as i32) {
+                    next_pc = self.pc.wrapping_add(imm as u32);
+                }
+            },
+            Instruction::Bltu { rs1, rs2, imm } => {
+                // if(rs1 < rs2) PC += imm (zero extended)
+                if self.read_register(rs1) < self.read_register(rs2) {
+                    next_pc = self.pc.wrapping_add(imm as u32);
+                }
+            },
+            Instruction::Bgeu { rs1, rs2, imm } => {
+                // if(rs1 >= rs2) PC += imm (zero extended)
+                if self.read_register(rs1) >= self.read_register(rs2) {
+                    next_pc = self.pc.wrapping_add(imm as u32);
+                }
+            },
             _ => return Err(StepError::IllegalInstruction),
         }
 
@@ -826,5 +862,25 @@ mod tests {
         p.write_register(1, 0x20000000); // unmapped address
         let result = p.execute(Instruction::Sb { rs1: 1, rs2: 2, imm: 0 });
         assert!(matches!(result, Err(StepError::MemoryFault(MemoryFault::OutOfBounds { address: 0x20000000 }))));
+    }
+
+    #[test]
+    fn test_blt_signed_taken() {
+        let mut p = Processor::new(0, 0, 0, 0);
+        p.write_register(1, 0xFFFFFFFF); // -1 signed
+        p.write_register(2, 1);
+        p.pc = 0;
+        p.execute(Instruction::Blt { rs1: 1, rs2: 2, imm: 8 }).unwrap();
+        assert_eq!(p.pc, 8); // branch taken, -1 < 1
+    }
+
+    #[test]
+    fn test_bltu_signed_not_taken() {
+        let mut p = Processor::new(0, 0, 0, 0);
+        p.write_register(1, 0xFFFFFFFF); // largest unsigned
+        p.write_register(2, 1);
+        p.pc = 0;
+        p.execute(Instruction::Bltu { rs1: 1, rs2: 2, imm: 8 }).unwrap();
+        assert_eq!(p.pc, 4); // branch NOT taken, 0xFFFFFFFF > 1 unsigned
     }
 }
