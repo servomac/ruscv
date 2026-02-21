@@ -1,7 +1,8 @@
 use crate::config;
 
 // TODO: this is not a good way to represent memory, it should be a
-// contiguous block of memory with different segments
+// contiguous block of memory with different segments;
+// view the read_byte and write_byte methods to see how memory is accessed.
 struct Memory {
     text: Vec<u8>,
     data: Vec<u8>,
@@ -9,6 +10,80 @@ struct Memory {
     text_base: u32,
     data_base: u32,
     stack_base: u32,
+}
+
+#[derive(Debug, PartialEq)]
+enum MemoryFault {
+    OutOfBounds { address: u32 },
+    WriteToReadOnly { address: u32 },
+    UnalignedAccess { address: u32 },
+    ExecuteFromNonExecutable { address: u32 }, // TODO: check in fetch
+}
+
+impl Memory {
+    fn read_byte(&self, address: u32) -> Result<u8, MemoryFault> {
+        if address >= self.text_base && address < self.text_base + self.text.len() as u32 {
+            Ok(self.text[(address - self.text_base) as usize])
+        } else if address >= self.data_base && address < self.data_base + self.data.len() as u32 {
+            Ok(self.data[(address - self.data_base) as usize])
+        } else if address >= self.stack_base && address < self.stack_base + self.stack.len() as u32 {
+            Ok(self.stack[(address - self.stack_base) as usize])
+        } else {
+            Err(MemoryFault::OutOfBounds { address })
+        }
+    }
+
+    fn write_byte(&mut self, address: u32, value: u8) -> Result<(), MemoryFault> {
+        if address >= self.text_base && address < self.text_base + self.text.len() as u32 {
+            self.text[(address - self.text_base) as usize] = value;
+        } else if address >= self.data_base && address < self.data_base + self.data.len() as u32 {
+            self.data[(address - self.data_base) as usize] = value;
+        } else if address >= self.stack_base && address < self.stack_base + self.stack.len() as u32 {
+            self.stack[(address - self.stack_base) as usize] = value;
+        } else {
+            return Err(MemoryFault::OutOfBounds { address });
+        }
+        Ok(())
+    }
+
+    fn write_half(&mut self, address: u32, value: u16) -> Result<(), MemoryFault> {
+        let byte0 = value as u8;
+        let byte1 = (value >> 8) as u8;
+        self.write_byte(address, byte0)?;
+        self.write_byte(address + 1, byte1)?;
+        Ok(())
+    }
+
+    fn write_word(&mut self, address: u32, value: u32) -> Result<(), MemoryFault> {
+        let byte0 = value as u8;
+        let byte1 = (value >> 8) as u8;
+        let byte2 = (value >> 16) as u8;
+        let byte3 = (value >> 24) as u8;
+        self.write_byte(address, byte0)?;
+        self.write_byte(address + 1, byte1)?;
+        self.write_byte(address + 2, byte2)?;
+        self.write_byte(address + 3, byte3)?;
+        Ok(())
+    }
+
+    fn read_half(&self, address: u32) -> Result<u16, MemoryFault> {
+        let byte0 = self.read_byte(address)?;
+        let byte1 = self.read_byte(address + 1)?;
+        Ok((byte1 as u16) << 8 | (byte0 as u16))
+    }
+
+    fn read_word(&self, address: u32) -> Result<u32, MemoryFault> {
+        let byte0 = self.read_byte(address)?;
+        let byte1 = self.read_byte(address + 1)?;
+        let byte2 = self.read_byte(address + 2)?;
+        let byte3 = self.read_byte(address + 3)?;
+        Ok(
+            (byte3 as u32) << 24 |
+            (byte2 as u32) << 16 |
+            (byte1 as u32) << 8 |
+            (byte0 as u32)
+        )
+    }
 }
 
 pub struct Processor {
@@ -20,8 +95,15 @@ pub struct Processor {
 #[derive(Debug, PartialEq)]
 enum StepError {
     IllegalInstruction,
-    MemoryFault,    // TODO which memory fault type?
+    MemoryFault(MemoryFault),
     Ebreak,
+}
+
+impl From<MemoryFault> for StepError {
+    // This allows to use the ? operator and handle the conversion from MemoryFault to StepError
+    fn from(fault: MemoryFault) -> Self {
+        StepError::MemoryFault(fault)
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -118,7 +200,8 @@ impl Processor {
         let offset = (self.pc - self.memory.text_base) as usize;
 
         // obtain 4 bytes representing the instruction
-        let bytes = self.memory.text.get(offset..offset + 4).ok_or(StepError::MemoryFault)?;
+        let bytes = self.memory.text.get(offset..offset + 4)
+            .ok_or(MemoryFault::OutOfBounds { address: self.pc })?;
 
         // assemble 4 bytes into u32, assuming little endian
         let instruction = u32::from_le_bytes(bytes.try_into().unwrap());
@@ -397,6 +480,36 @@ impl Processor {
                 let result = if self.read_register(rs1) < imm as u32 { 1 } else { 0 };
                 self.write_register(rd, result);
             },
+            Instruction::Lb { rd, rs1, imm } => {
+                // rd = M[rs1+imm][0:7] (sign extended)
+                let address = self.read_register(rs1).wrapping_add(imm as u32);
+                let value = self.memory.read_byte(address)?;
+                self.write_register(rd, value as i8 as u32);
+            },
+            Instruction::Lh { rd, rs1, imm } => {
+                // rd = M[rs1+imm][0:15] (sign extended)
+                let address = self.read_register(rs1).wrapping_add(imm as u32);
+                let value = self.memory.read_half(address)?;
+                self.write_register(rd, value as i16 as u32);
+            },
+            Instruction::Lw { rd, rs1, imm } => {
+                // rd = M[rs1+imm][0:31]
+                let address = self.read_register(rs1).wrapping_add(imm as u32);
+                let value = self.memory.read_word(address)?;
+                self.write_register(rd, value);
+            },
+            Instruction::Lbu { rd, rs1, imm } => {
+                // rd = M[rs1+imm][0:7] (zero extended)
+                let address = self.read_register(rs1).wrapping_add(imm as u32);
+                let value = self.memory.read_byte(address)?;
+                self.write_register(rd, value as u32);
+            },
+            Instruction::Lhu { rd, rs1, imm } => {
+                // rd = M[rs1+imm][0:15] (zero extended)
+                let address = self.read_register(rs1).wrapping_add(imm as u32);
+                let value = self.memory.read_half(address)?;
+                self.write_register(rd, value as u32);
+            },
             _ => return Err(StepError::IllegalInstruction),
         }
 
@@ -639,5 +752,46 @@ mod tests {
         processor.registers[2] = 0xFFFFFFFF;
         processor.execute(Instruction::Sltu { rd: 3, rs1: 1, rs2: 2 }).unwrap();
         assert_eq!(processor.registers[3], 1);
+    }
+
+    fn processor_with_data(data: Vec<u8>) -> Processor {
+        let mut p = Processor::new(0x0, 0x10000000, 0x7FFFFFFF, 1024);
+        p.memory.data = data;
+        p
+    }
+
+    #[test]
+    fn test_lb_sign_extends_negative() {
+        let mut p = processor_with_data(vec![0xFF]);
+        p.write_register(1, 0x10000000);  // rs1 = data_base
+        p.execute(Instruction::Lb { rd: 2, rs1: 1, imm: 0 }).unwrap();
+        // 0xFF as i8 = -1, sign extended to u32 = 0xFFFFFFFF
+        assert_eq!(p.read_register(2), 0xFFFFFFFF);
+    }
+
+    #[test]
+    fn test_lbu_zero_extends() {
+        let mut p = processor_with_data(vec![0xFF]);
+        p.write_register(1, 0x10000000);
+        p.execute(Instruction::Lbu { rd: 2, rs1: 1, imm: 0 }).unwrap();
+        // 0xFF zero extended = 0x000000FF
+        assert_eq!(p.read_register(2), 0x000000FF);
+    }
+
+    #[test]
+    fn test_load_with_negative_offset() {
+        let mut p = processor_with_data(vec![0x42, 0x00]);
+        // point rs1 past the first byte, use imm=-1 to reach it
+        p.write_register(1, 0x10000001);
+        p.execute(Instruction::Lb { rd: 2, rs1: 1, imm: -1 }).unwrap();
+        assert_eq!(p.read_register(2), 0x42);
+    }
+
+    #[test]
+    fn test_load_out_of_bounds_returns_fault() {
+        let mut p = processor_with_data(vec![0x00]);
+        p.write_register(1, 0x20000000); // unmapped address
+        let result = p.execute(Instruction::Lw { rd: 2, rs1: 1, imm: 0 });
+        assert!(matches!(result, Err(StepError::MemoryFault(MemoryFault::OutOfBounds { address: 0x20000000 }))));
     }
 }
