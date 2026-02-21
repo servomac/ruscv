@@ -17,7 +17,7 @@ enum MemoryFault {
     OutOfBounds { address: u32 },
     WriteToReadOnly { address: u32 },           // TODO
     UnalignedAccess { address: u32 },           // TODO
-    ExecuteFromNonExecutable { address: u32 }, // TODO: check in fetch
+    ExecuteFromNonExecutable { address: u32 },  // TODO: check in fetch
 }
 
 impl Memory {
@@ -395,7 +395,6 @@ impl Processor {
     fn execute(&mut self, instruction: Instruction) -> Result<(), StepError> {
         let mut next_pc = self.pc.wrapping_add(4);
 
-        // TODO: implement pending instructions
         match instruction {
             Instruction::Add { rd, rs1, rs2 } => {
                 // wrapping_add allows us not to panic on overflows and maintain the semantic of risc-v
@@ -512,7 +511,6 @@ impl Processor {
             },
             Instruction::Sb { rs1, rs2, imm } => {
                 // M[rs1+imm][0:7] = rs2[0:7]
-                println!("Store byte => rs1: {}, rs2: {}, imm: {}", self.read_register(rs1), self.read_register(rs2), imm);
                 let address = self.read_register(rs1).wrapping_add(imm as u32);
                 self.memory.write_byte(address, self.read_register(rs2) as u8)?;
             },
@@ -551,13 +549,13 @@ impl Processor {
                 }
             },
             Instruction::Bltu { rs1, rs2, imm } => {
-                // if(rs1 < rs2) PC += imm (zero extended)
+                // if(rs1 < rs2) PC += imm (zero extended / unsigned comparison)
                 if self.read_register(rs1) < self.read_register(rs2) {
                     next_pc = self.pc.wrapping_add(imm as u32);
                 }
             },
             Instruction::Bgeu { rs1, rs2, imm } => {
-                // if(rs1 >= rs2) PC += imm (zero extended)
+                // if(rs1 >= rs2) PC += imm (zero extended / unsigned comparison)
                 if self.read_register(rs1) >= self.read_register(rs2) {
                     next_pc = self.pc.wrapping_add(imm as u32);
                 }
@@ -573,6 +571,15 @@ impl Processor {
                 // The & !1 masks out bit 0, ensuring the target is always 2-byte aligned
                 next_pc = self.read_register(rs1).wrapping_add(imm as u32) & !1;
             },
+            Instruction::Lui { rd, imm } => {
+                // rd = upper imm (upper mask already applied by the decoder)
+                self.write_register(rd, imm as u32);
+            },
+            Instruction::Auipc { rd, imm } => {
+                // rd = PC + upper imm (upper mask already applied by the decoder)
+                self.write_register(rd, self.pc.wrapping_add(imm as u32));
+            },
+            // TODO pending instructions: ecall, ebreak
             _ => return Err(StepError::IllegalInstruction),
         }
 
@@ -930,5 +937,46 @@ mod tests {
         p.write_register(2, 0x200);
         p.execute(Instruction::Jalr { rd: 1, rs1: 2, imm: 1 }).unwrap(); // rs1 + imm = 0x201
         assert_eq!(p.pc, 0x200); // LSB cleared → 0x200
+    }
+
+    #[test]
+    fn test_lui_loads_upper_immediate() {
+        let mut p = Processor::new(0, 0, 0, 0);
+        p.execute(Instruction::Lui { rd: 1, imm: 0x12345000 }).unwrap();
+        assert_eq!(p.read_register(1), 0x12345000);
+    }
+
+    #[test]
+    fn test_lui_lower_bits_are_zero() {
+        let mut p = Processor::new(0, 0, 0, 0);
+        p.execute(Instruction::Lui { rd: 1, imm: 0x12345000 }).unwrap();
+        // lower 12 bits must always be zero
+        assert_eq!(p.read_register(1) & 0xFFF, 0);
+    }
+
+    #[test]
+    fn test_lui_ignores_pc() {
+        let mut p = Processor::new(0, 0, 0, 0);
+        p.pc = 0x100;
+        p.execute(Instruction::Lui { rd: 1, imm: 0x12345000 }).unwrap();
+        // LUI does not involve PC at all
+        assert_eq!(p.read_register(1), 0x12345000);
+    }
+
+    #[test]
+    fn test_auipc_adds_pc() {
+        let mut p = Processor::new(0, 0, 0, 0);
+        p.pc = 0x100;
+        p.execute(Instruction::Auipc { rd: 1, imm: 0x12345000 }).unwrap();
+        assert_eq!(p.read_register(1), 0x12345100); // PC + imm
+    }
+
+    #[test]
+    fn test_auipc_at_pc_zero() {
+        let mut p = Processor::new(0, 0, 0, 0);
+        p.pc = 0x0;
+        p.execute(Instruction::Auipc { rd: 1, imm: 0x12345000 }).unwrap();
+        // when PC=0, result is just imm
+        assert_eq!(p.read_register(1), 0x12345000);
     }
 }
