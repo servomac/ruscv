@@ -13,7 +13,7 @@ struct Memory {
 }
 
 #[derive(Debug, PartialEq)]
-enum MemoryFault {
+pub enum MemoryFault {
     OutOfBounds { address: u32 },
     WriteToReadOnly { address: u32 },           // TODO
     UnalignedAccess { address: u32 },           // TODO
@@ -93,7 +93,7 @@ pub struct Processor {
 }
 
 #[derive(Debug, PartialEq)]
-enum StepError {
+pub enum StepError {
     IllegalInstruction,
     MemoryFault(MemoryFault),
     Ebreak,
@@ -184,6 +184,13 @@ impl Processor {
         self.memory.text = text.clone();
         self.memory.data = data.clone();
         self.pc = self.memory.text_base;
+    }
+
+    pub fn reset(&mut self) {
+        self.pc = self.memory.text_base;
+        self.registers = [0; config::NUM_REGISTERS];
+        // Stack and other memory are effectively overwritten dynamically;
+        // but resetting registers and PC is enough for a clean restart from loaded state.
     }
 
     pub fn step(&mut self) -> Result<(), StepError> {
@@ -579,7 +586,8 @@ impl Processor {
                 // rd = PC + upper imm (upper mask already applied by the decoder)
                 self.write_register(rd, self.pc.wrapping_add(imm as u32));
             },
-            // TODO pending instructions: ecall, ebreak
+            Instruction::Ebreak => return Err(StepError::Ebreak),
+            // TODO  ecall
             _ => return Err(StepError::IllegalInstruction),
         }
 
@@ -606,6 +614,33 @@ impl Processor {
         println!("Registers: {:?}", self.registers);
     }
 
+    pub fn pc(&self) -> u32 {
+        self.pc
+    }
+
+    pub fn registers(&self) -> &[u32; config::NUM_REGISTERS] {
+        &self.registers
+    }
+
+    pub fn read_memory_word(&self, address: u32) -> Result<u32, MemoryFault> {
+        self.memory.read_word(address)
+    }
+
+    pub fn text_base(&self) -> u32 {
+        self.memory.text_base
+    }
+
+    pub fn data_base(&self) -> u32 {
+        self.memory.data_base
+    }
+
+    pub fn stack_base(&self) -> u32 {
+        self.memory.stack_base
+    }
+
+    pub fn stack_size(&self) -> usize {
+        self.memory.stack.len()
+    }
 }
 
 #[cfg(test)]
