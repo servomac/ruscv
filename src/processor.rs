@@ -510,6 +510,22 @@ impl Processor {
                 let value = self.memory.read_half(address)?;
                 self.write_register(rd, value as u32);
             },
+            Instruction::Sb { rs1, rs2, imm } => {
+                // M[rs1+imm][0:7] = rs2[0:7]
+                println!("Store byte => rs1: {}, rs2: {}, imm: {}", self.read_register(rs1), self.read_register(rs2), imm);
+                let address = self.read_register(rs1).wrapping_add(imm as u32);
+                self.memory.write_byte(address, self.read_register(rs2) as u8)?;
+            },
+            Instruction::Sh { rs1, rs2, imm } => {
+                // M[rs1+imm][0:15] = rs2[0:15]
+                let address = self.read_register(rs1).wrapping_add(imm as u32);
+                self.memory.write_half(address, self.read_register(rs2) as u16)?;
+            },
+            Instruction::Sw { rs1, rs2, imm } => {
+                // M[rs1+imm][0:31] = rs2[0:31]
+                let address = self.read_register(rs1).wrapping_add(imm as u32);
+                self.memory.write_word(address, self.read_register(rs2))?;
+            },
             _ => return Err(StepError::IllegalInstruction),
         }
 
@@ -792,6 +808,23 @@ mod tests {
         let mut p = processor_with_data(vec![0x00]);
         p.write_register(1, 0x20000000); // unmapped address
         let result = p.execute(Instruction::Lw { rd: 2, rs1: 1, imm: 0 });
+        assert!(matches!(result, Err(StepError::MemoryFault(MemoryFault::OutOfBounds { address: 0x20000000 }))));
+    }
+
+    #[test]
+    fn test_store_with_negative_offset() {
+        let mut p = processor_with_data(vec![0x00]);
+        p.write_register(1, 0x10000001); // point rs1 past the first byte
+        p.write_register(2, 0x42);
+        p.execute(Instruction::Sb { rs1: 1, rs2: 2, imm: -1 }).unwrap();
+        assert_eq!(p.memory.data[0], 0x42);
+    }
+
+    #[test]
+    fn test_store_out_of_bounds_returns_fault() {
+        let mut p = processor_with_data(vec![0x00]);
+        p.write_register(1, 0x20000000); // unmapped address
+        let result = p.execute(Instruction::Sb { rs1: 1, rs2: 2, imm: 0 });
         assert!(matches!(result, Err(StepError::MemoryFault(MemoryFault::OutOfBounds { address: 0x20000000 }))));
     }
 }
