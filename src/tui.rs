@@ -1,4 +1,10 @@
 use crate::processor::Processor;
+use crate::config;
+use crate::lexer;
+use crate::parser;
+use crate::symbols;
+use crate::assembler;
+
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
@@ -43,29 +49,29 @@ pub struct App<'a> {
 }
 
 impl<'a> App<'a> {
-    pub fn new(processor: Processor) -> App<'a> {
+    pub fn new() -> App<'a> {
         let mut editor = TextArea::default();
         editor.set_block(
             ratatui::widgets::Block::default()
                 .borders(ratatui::widgets::Borders::ALL)
-                .title("Code Editor (Press F5 to Run, F10 to Step, Tab to switch)"),
+                .title("Code Editor (F2: Load, F5: Run, F10: Step, Tab: Switch)"),
         );
 
         App {
-            processor,
+            processor: Processor::new(config::TEXT_BASE, config::DATA_BASE, config::STACK_BASE, config::STACK_SIZE),
             editor,
             active_pane: Pane::Editor,
             number_format: NumFormat::Hex,
             mode: RunMode::Editing,
             registers_scroll: 0,
-            memory_scroll: crate::config::TEXT_BASE,
+            memory_scroll: config::TEXT_BASE,
             logs: vec![],
             should_quit: false,
         }
     }
 }
 
-pub fn run(processor: Processor) -> Result<(), io::Error> {
+pub fn run() -> Result<(), io::Error> {
     // setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -74,7 +80,7 @@ pub fn run(processor: Processor) -> Result<(), io::Error> {
     let mut terminal = Terminal::new(backend)?;
 
     // create app and run it
-    let app = App::new(processor);
+    let app = App::new();
     let res = run_app(&mut terminal, app);
 
     // restore terminal
@@ -91,14 +97,14 @@ pub fn run(processor: Processor) -> Result<(), io::Error> {
 
 fn compile_and_load(app: &mut App) -> Result<(), String> {
     let source = app.editor.lines().join("\n");
-    let tokens = crate::lexer::tokenize(&source);
-    let mut parser = crate::parser::Parser::new(tokens);
+    let tokens = lexer::tokenize(&source);
+    let mut parser = parser::Parser::new(tokens);
     let statements = parser.parse().map_err(|_| "Parse error".to_string())?;
 
-    let mut symbol_table = crate::symbols::SymbolTable::new(crate::config::TEXT_BASE, crate::config::DATA_BASE);
+    let mut symbol_table = symbols::SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
     symbol_table.build(&statements).map_err(|_| "Symbol error".to_string())?;
 
-    let mut assembler = crate::assembler::Assembler::new(crate::config::TEXT_BASE, crate::config::DATA_BASE);
+    let mut assembler = assembler::Assembler::new(config::TEXT_BASE, config::DATA_BASE);
     if let Err(errors) = assembler.assemble(&statements, &symbol_table) {
         let mut msg = String::new();
         for err in errors {
@@ -107,10 +113,10 @@ fn compile_and_load(app: &mut App) -> Result<(), String> {
         return Err(msg);
     }
 
-    app.processor.reset();
+    app.processor = Processor::new(config::TEXT_BASE, config::DATA_BASE, config::STACK_BASE, config::STACK_SIZE);
     app.processor.load(&assembler.text_bin, &assembler.data_bin);
     app.logs.push("Assembly successful! CPU reset and loaded.".to_string());
-    app.memory_scroll = crate::config::TEXT_BASE; // scroll to text base by default
+    app.memory_scroll = config::TEXT_BASE; // scroll to text base by default
     Ok(())
 }
 
@@ -138,6 +144,16 @@ fn run_app<B: ratatui::backend::Backend>(
                         Pane::Memory => Pane::Logs,
                         Pane::Logs => Pane::Editor,
                     };
+                    continue;
+                }
+
+                if key.code == KeyCode::F(2) {
+                    // Just Load
+                    if app.mode == RunMode::Editing {
+                        if let Err(e) = compile_and_load(&mut app) {
+                            app.logs.push(format!("Compile Error:\n{}", e));
+                        }
+                    }
                     continue;
                 }
 
@@ -259,7 +275,7 @@ mod ui {
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(editor_style)
-                .title("Code Editor (Press F5 to Run, F10 to Step, Tab to switch)"),
+                .title("Code Editor (F2: Load, F5: Run, F10: Step, Tab: Switch)"),
         );
         f.render_widget(app.editor.widget(), middle_chunks[0]);
 
