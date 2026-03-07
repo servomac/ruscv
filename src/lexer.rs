@@ -10,7 +10,7 @@ pub enum LexError {
 pub struct SpannedToken {
     pub token: Token,
     pub line: usize,
-    column: usize,
+    pub column: usize,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -112,11 +112,11 @@ pub fn tokenize(source: &str) -> Result<Vec<SpannedToken>, LexError> {
                 });
             }
             '"' => {
-                let token = read_string_literal(&mut chars, line, column)?;
+                let token = read_string_literal(&mut chars, line, &mut column)?;
                 tokens.push(token);
             }
             '0'..='9' | '-' => {
-                let token = read_number(char, &mut chars, line, column)?;
+                let token = read_number(char, &mut chars, line, &mut column)?;
                 tokens.push(token);
             }
             'A'..='Z' | 'a'..='z' | '_' => {
@@ -153,36 +153,37 @@ pub fn tokenize(source: &str) -> Result<Vec<SpannedToken>, LexError> {
     Ok(tokens)
 }
 
-fn read_string_literal(chars: &mut std::iter::Peekable<std::str::Chars>, line: usize, mut column: usize) -> Result<SpannedToken, LexError> {
-    let start_column = column;
+fn read_string_literal(chars: &mut std::iter::Peekable<std::str::Chars>, line: usize, column: &mut usize) -> Result<SpannedToken, LexError> {
+    let start_column = *column;
     let mut string_literal = String::new();
     let mut unterminated = true;
     while let Some(next_char) = chars.next() {
-        column += 1;
+        *column += 1;
         if next_char == '"' {
             unterminated = false;
             break;
         }
         if next_char == '\\' {
             if let Some(escaped_char) = chars.next() {
-                column += 1;
+                *column += 1;
                 match escaped_char {
                     'n' => string_literal.push('\n'),
                     't' => string_literal.push('\t'),
                     '\\' => string_literal.push('\\'),
                     '"' => string_literal.push('"'),
-                    _ => return Err(LexError::UnknownEscapeSequence(escaped_char, line, column)),
+                    _ => return Err(LexError::UnknownEscapeSequence(escaped_char, line, *column)),
                 }
             } else {
-                return Err(LexError::UnterminatedString(line, column));
+                return Err(LexError::UnterminatedString(line, *column));
             }
         } else {
             string_literal.push(next_char);
         }
     }
     if unterminated {
-        return Err(LexError::UnterminatedString(line, column));
+        return Err(LexError::UnterminatedString(line, *column));
     }
+    *column += 1; // Count the closing quote
     Ok(SpannedToken {
         token: Token::StringLiteral(string_literal),
         line,
@@ -190,13 +191,14 @@ fn read_string_literal(chars: &mut std::iter::Peekable<std::str::Chars>, line: u
     })
 }
 
-fn read_number(first_char: char, chars: &mut std::iter::Peekable<std::str::Chars>, line: usize, mut column: usize) -> Result<SpannedToken, LexError> {
-    let start_column = column;
+fn read_number(first_char: char, chars: &mut std::iter::Peekable<std::str::Chars>, line: usize, column: &mut usize) -> Result<SpannedToken, LexError> {
+    let start_column = *column;
     let mut number_str = String::new();
     let mut radix = 10;
     let is_negative = first_char == '-';
 
     let next_digit = if is_negative {
+        *column += 1;
         chars.next().unwrap_or(' ')
     } else {
         first_char
@@ -204,28 +206,28 @@ fn read_number(first_char: char, chars: &mut std::iter::Peekable<std::str::Chars
 
     if next_digit == '0' && let Some(&prefix) = chars.peek() {
         match prefix {
-            'x' | 'X' => { radix = 16; chars.next(); column += 1; },
-            'b' | 'B' => { radix = 2;  chars.next(); column += 1; },
-            'o' | 'O' => { radix = 8;  chars.next(); column += 1; },
+            'x' | 'X' => { radix = 16; chars.next(); *column += 1; },
+            'b' | 'B' => { radix = 2;  chars.next(); *column += 1; },
+            'o' | 'O' => { radix = 8;  chars.next(); *column += 1; },
             _ => { number_str.push('0'); }
         }
     } else {
         number_str.push(next_digit);
     }
-    column += 1;
+    *column += 1;
 
     while let Some(&next) = chars.peek() {
         if next.is_digit(radix) || (radix == 16 && next.is_ascii_hexdigit()) {
             number_str.push(next);
             chars.next();
-            column += 1;
+            *column += 1;
         } else {
             break;
         }
     }
 
     let mut val = i32::from_str_radix(&number_str, radix)
-        .map_err(|_| LexError::InvalidNumber(number_str, line, column))?;
+        .map_err(|_| LexError::InvalidNumber(number_str, line, *column))?;
 
     if is_negative { val = -val; }
 
@@ -380,6 +382,31 @@ mod tests {
         assert_eq!(tokens[5].token, Token::Immediate(255)); // 0xFF is 255 in decimal
     }
     // TODO test lines and columns in SpannedToken
+
+    #[test]
+    fn test_column_tracking() {
+        // Test that strings and numbers store the START column
+        // and that subsequent tokens have the correct columns
+        let source = "  123   \"hello\"   add";
+        //            123456789012345678901
+        //            ^  ^     ^         ^
+        //            1  3     9         19
+        let tokens = tokenize(source).expect("Should tokenize successfully");
+
+        assert_eq!(tokens.len(), 4); // 3 tokens + Eof
+
+        // Number "123" starts at column 3
+        assert_eq!(tokens[0].token, Token::Immediate(123));
+        assert_eq!(tokens[0].column, 3);
+
+        // String "\"hello\"" starts at column 9
+        assert_eq!(tokens[1].token, Token::StringLiteral("hello".to_string()));
+        assert_eq!(tokens[1].column, 9);
+
+        // Instruction "add" starts at column 19
+        assert_eq!(tokens[2].token, Token::Instruction("add".to_string()));
+        assert_eq!(tokens[2].column, 19);
+    }
 
     #[test]
     fn test_lex_errors() {
