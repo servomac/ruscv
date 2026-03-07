@@ -4,6 +4,10 @@ pub enum LexError {
     UnterminatedString(usize, usize),
     UnknownEscapeSequence(char, usize, usize),
     InvalidNumber(String, usize, usize),
+    EmptyNumberPrefix(String, usize, usize),
+    InvalidRegister(String, usize, usize),
+    EmptyDirective(usize, usize),
+    NumericOverflow(String, usize, usize),
 }
 
 #[derive(Debug)]
@@ -37,7 +41,7 @@ pub fn tokenize(source: &str) -> Result<Vec<SpannedToken>, LexError> {
 
     while let Some(char) = chars.next() {
         match char {
-            ' '  | '\t' => {
+            ' '  | '\t' | '\r' => {
                 column += 1;
                 continue;
             }
@@ -51,6 +55,7 @@ pub fn tokenize(source: &str) -> Result<Vec<SpannedToken>, LexError> {
                 column = 1;
             }
             '#' => {
+                column += 1;
                 while let Some(&next_char) = chars.peek() {
                     if next_char == '\n' {
                         break;
@@ -94,6 +99,7 @@ pub fn tokenize(source: &str) -> Result<Vec<SpannedToken>, LexError> {
             }
             '.' => {
                 let start_column = column;
+                column += 1;
                 let mut directive = char.to_string();
                 while let Some(&next_char) = chars.peek() {
                     if next_char.is_alphanumeric() || next_char == '_' {
@@ -104,15 +110,19 @@ pub fn tokenize(source: &str) -> Result<Vec<SpannedToken>, LexError> {
                         break;
                     }
                 }
-                column += 1;
+                if directive.len() == 1 {
+                    return Err(LexError::EmptyDirective(line, start_column));
+                }
                 tokens.push(SpannedToken {
-                    token: Token::Directive(directive),
+                    token: Token::Directive(directive.to_lowercase()),
                     line,
                     column: start_column,
                 });
             }
             '"' => {
-                let token = read_string_literal(&mut chars, line, &mut column)?;
+                let start_column = column;
+                column += 1;
+                let token = read_string_literal(&mut chars, line, start_column, &mut column)?;
                 tokens.push(token);
             }
             '0'..='9' | '-' => {
@@ -121,6 +131,7 @@ pub fn tokenize(source: &str) -> Result<Vec<SpannedToken>, LexError> {
             }
             'A'..='Z' | 'a'..='z' | '_' => {
                 let start_column = column;
+                column += 1;
                 let mut identifier = char.to_string();
                 while let Some(&next_char) = chars.peek() {
                     if next_char.is_alphanumeric() || next_char == '_' {
@@ -131,9 +142,8 @@ pub fn tokenize(source: &str) -> Result<Vec<SpannedToken>, LexError> {
                         break;
                     }
                 }
-                column += 1;
                 tokens.push(SpannedToken {
-                    token: classify_identifier(&identifier),
+                    token: classify_identifier(&identifier, line, start_column)?,
                     line,
                     column: start_column,
                 });
@@ -153,8 +163,7 @@ pub fn tokenize(source: &str) -> Result<Vec<SpannedToken>, LexError> {
     Ok(tokens)
 }
 
-fn read_string_literal(chars: &mut std::iter::Peekable<std::str::Chars>, line: usize, column: &mut usize) -> Result<SpannedToken, LexError> {
-    let start_column = *column;
+fn read_string_literal(chars: &mut std::iter::Peekable<std::str::Chars>, line: usize, start_column: usize, column: &mut usize) -> Result<SpannedToken, LexError> {
     let mut string_literal = String::new();
     let mut unterminated = true;
     while let Some(next_char) = chars.next() {
@@ -183,7 +192,6 @@ fn read_string_literal(chars: &mut std::iter::Peekable<std::str::Chars>, line: u
     if unterminated {
         return Err(LexError::UnterminatedString(line, *column));
     }
-    *column += 1; // Count the closing quote
     Ok(SpannedToken {
         token: Token::StringLiteral(string_literal),
         line,
@@ -193,28 +201,57 @@ fn read_string_literal(chars: &mut std::iter::Peekable<std::str::Chars>, line: u
 
 fn read_number(first_char: char, chars: &mut std::iter::Peekable<std::str::Chars>, line: usize, column: &mut usize) -> Result<SpannedToken, LexError> {
     let start_column = *column;
-    let mut number_str = String::new();
-    let mut radix = 10;
     let is_negative = first_char == '-';
+    let mut radix = 10;
+    let mut number_str = String::new();
 
-    let next_digit = if is_negative {
-        *column += 1;
-        chars.next().unwrap_or(' ')
-    } else {
-        first_char
-    };
-
-    if next_digit == '0' && let Some(&prefix) = chars.peek() {
-        match prefix {
-            'x' | 'X' => { radix = 16; chars.next(); *column += 1; },
-            'b' | 'B' => { radix = 2;  chars.next(); *column += 1; },
-            'o' | 'O' => { radix = 8;  chars.next(); *column += 1; },
-            _ => { number_str.push('0'); }
+    if is_negative {
+        match chars.peek() {
+            Some(&c) if c.is_digit(10) => {
+                // continue to parse
+            }
+            _ => return Err(LexError::UnexpectedChar('-', line, start_column)),
         }
     } else {
-        number_str.push(next_digit);
+        number_str.push(first_char);
     }
     *column += 1;
+
+    // check for prefix
+    if (is_negative && chars.peek() == Some(&'0')) || (!is_negative && first_char == '0') {
+        if is_negative {
+            chars.next(); // consume '0'
+            *column += 1;
+        }
+
+        if let Some(&prefix) = chars.peek() {
+            match prefix {
+                'x' | 'X' => { radix = 16; chars.next(); *column += 1; }
+                'b' | 'B' => { radix = 2;  chars.next(); *column += 1; }
+                'o' | 'O' => { radix = 8;  chars.next(); *column += 1; }
+                _ => {
+                    if !is_negative {
+                        // already pushed '0'
+                    } else {
+                        number_str.push('0');
+                    }
+                }
+            }
+
+            if radix != 10 {
+                // Check if we have at least one digit after the prefix
+                match chars.peek() {
+                    Some(&c) if c.is_digit(radix) || (radix == 16 && c.is_ascii_hexdigit()) => {}
+                    _ => {
+                        let prefix_str = if is_negative { format!("-0{}", prefix) } else { format!("0{}", prefix) };
+                        return Err(LexError::EmptyNumberPrefix(prefix_str, line, *column));
+                    }
+                }
+            }
+        } else if is_negative {
+            number_str.push('0');
+        }
+    }
 
     while let Some(&next) = chars.peek() {
         if next.is_digit(radix) || (radix == 16 && next.is_ascii_hexdigit()) {
@@ -226,10 +263,16 @@ fn read_number(first_char: char, chars: &mut std::iter::Peekable<std::str::Chars
         }
     }
 
-    let mut val = i32::from_str_radix(&number_str, radix)
-        .map_err(|_| LexError::InvalidNumber(number_str, line, *column))?;
-
-    if is_negative { val = -val; }
+    let val = match i32::from_str_radix(&number_str, radix) {
+        Ok(v) => if is_negative { -v } else { v },
+        Err(e) => {
+            if e.kind() == &std::num::IntErrorKind::PosOverflow || e.kind() == &std::num::IntErrorKind::NegOverflow {
+                return Err(LexError::NumericOverflow(number_str, line, start_column));
+            } else {
+                return Err(LexError::InvalidNumber(number_str, line, start_column));
+            }
+        }
+    };
 
     Ok(SpannedToken {
         token: Token::Immediate(val),
@@ -238,28 +281,39 @@ fn read_number(first_char: char, chars: &mut std::iter::Peekable<std::str::Chars
     })
 }
 
-fn classify_identifier(ident: &str) -> Token {
-    // Lets search for registers first, since they can be confused with labels or instructions
-    if ident.starts_with('x') && ident.len() > 1
-        && let Ok(num) = ident[1..].parse::<u8>()  && num <= 31 {
-            return Token::Register(num);
+fn classify_identifier(ident: &str, line: usize, column: usize) -> Result<Token, LexError> {
+    let lower_ident = ident.to_lowercase();
+
+    // Check if it looks like a register (x0-x31)
+    if lower_ident.starts_with('x') && lower_ident.len() > 1 && lower_ident[1..].chars().all(|c| c.is_ascii_digit()) {
+        if let Ok(num) = lower_ident[1..].parse::<u8>() {
+            if num <= 31 {
+                return Ok(Token::Register(num));
+            } else {
+                return Err(LexError::InvalidRegister(ident.to_string(), line, column));
+            }
+        }
     }
 
-    // Try to match the identifier with the ABI register names (like "zero", "ra", "sp", etc)
-    if let Some(reg_num) = abi_to_register(ident) {
-        return Token::Register(reg_num);
+    // Try to match the identifier with the ABI register names
+    if let Some(reg_num) = abi_to_register(&lower_ident) {
+        return Ok(Token::Register(reg_num));
     }
 
-    // If its not a register, it can be an instruction, a directive or a label
-    match ident {
+    // Instructions
+    let is_instruction = match lower_ident.as_str() {
         "add" | "sub" | "and" | "or" | "xor" | "sll" | "srl" | "sra" | "slt" | "sltu" |
         "addi" | "andi" | "ori" | "xori" | "slli" | "srli" | "srai" | "slti" | "sltiu" |
-        "lw" | "sw" | "beq" | "bne" | "blt" | "bge" | "jal" | "jalr" => {
-            Token::Instruction(ident.to_string())
-        }
-        
-        // Si no es nada de lo anterior, es una etiqueta (label)
-        _ => Token::Label(ident.to_string()),
+        "lw" | "sw" | "lb" | "lh" | "lbu" | "lhu" | "sb" | "sh" |
+        "beq" | "bne" | "blt" | "bge" | "bltu" | "bgeu" |
+        "jal" | "jalr" | "lui" | "auipc" | "ecall" | "ebreak" => true,
+        _ => false,
+    };
+
+    if is_instruction {
+        Ok(Token::Instruction(lower_ident))
+    } else {
+        Ok(Token::Label(ident.to_string())) // Labels are case-sensitive usually, but we preserve original case
     }
 }
 
@@ -416,10 +470,59 @@ mod tests {
 
         // Unterminated string
         let res = tokenize(".string \"Hello");
-        assert_eq!(res.unwrap_err(), LexError::UnterminatedString(1, 14));
+        assert_eq!(res.unwrap_err(), LexError::UnterminatedString(1, 15));
 
         // Unknown escape sequence
         let res = tokenize(".string \"Hello\\z\"");
-        assert_eq!(res.unwrap_err(), LexError::UnknownEscapeSequence('z', 1, 16));
+        assert_eq!(res.unwrap_err(), LexError::UnknownEscapeSequence('z', 1, 17));
+    }
+
+    #[test]
+    fn test_case_insensitivity() {
+        let source = "ADD X1, ZERO, x2";
+        let tokens = tokenize(source).expect("Should tokenize successfully");
+        assert_eq!(tokens[0].token, Token::Instruction("add".to_string()));
+        assert_eq!(tokens[1].token, Token::Register(1));
+        assert_eq!(tokens[3].token, Token::Register(0));
+        assert_eq!(tokens[5].token, Token::Register(2));
+    }
+
+    #[test]
+    fn test_invalid_register() {
+        let res = tokenize("add x32, x1, x2");
+        assert_eq!(res.unwrap_err(), LexError::InvalidRegister("x32".to_string(), 1, 5));
+    }
+
+    #[test]
+    fn test_empty_directive() {
+        let res = tokenize(". ");
+        assert_eq!(res.unwrap_err(), LexError::EmptyDirective(1, 1));
+    }
+
+    #[test]
+    fn test_robust_numbers() {
+        // Negative hex
+        let res = tokenize("addi a0, a0, -0x10");
+        let tokens = res.expect("Should tokenize successfully");
+        assert_eq!(tokens[5].token, Token::Immediate(-16));
+
+        // Empty prefix
+        let res = tokenize("addi a0, a0, 0x");
+        assert_eq!(res.unwrap_err(), LexError::EmptyNumberPrefix("0x".to_string(), 1, 16));
+
+        // Negative empty prefix
+        let res = tokenize("addi a0, a0, -0b");
+        assert_eq!(res.unwrap_err(), LexError::EmptyNumberPrefix("-0b".to_string(), 1, 17));
+
+        // Binary
+        let res = tokenize("0b1010");
+        let tokens = res.expect("Should tokenize successfully");
+        assert_eq!(tokens[0].token, Token::Immediate(10));
+    }
+
+    #[test]
+    fn test_numeric_overflow() {
+        let res = tokenize("2147483648"); // i32::MAX + 1
+        assert_eq!(res.unwrap_err(), LexError::NumericOverflow("2147483648".to_string(), 1, 1));
     }
 }
