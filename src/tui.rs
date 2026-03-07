@@ -101,6 +101,7 @@ fn compile_and_load(app: &mut App) -> Result<(), String> {
         Ok(tokens) => tokens,
         Err(e) => return Err(format!("Lex error: {:?}", e)),
     };
+    // TODO lex errors should be reported to the user in a more user-friendly way, as parse errors
     let mut parser = parser::Parser::new(tokens);
     let statements = parser.parse().map_err(|_| "Parse error".to_string())?;
 

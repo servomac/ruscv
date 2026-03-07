@@ -112,51 +112,12 @@ pub fn tokenize(source: &str) -> Result<Vec<SpannedToken>, LexError> {
                 });
             }
             '"' => {
-                // TODO extract to read_string_literal function
-                let start_column = column;
-                let mut string_literal = String::new();
-                let mut unterminated = true;
-                while let Some(next_char) = chars.next() {
-                    column += 1;
-                    if next_char == '"' {
-                        unterminated = false;
-                        break;
-                    }
-                    if next_char == '\\' {
-                        if let Some(escaped_char) = chars.next() {
-                            column += 1;
-                            match escaped_char {
-                                'n' => string_literal.push('\n'),
-                                't' => string_literal.push('\t'),
-                                '\\' => string_literal.push('\\'),
-                                '"' => string_literal.push('"'),
-                                _ => return Err(LexError::UnknownEscapeSequence(escaped_char, line, column)),
-                            }
-                        } else {
-                            return Err(LexError::UnterminatedString(line, column));
-                        }
-                    } else {
-                        string_literal.push(next_char);
-                    }
-                }
-                if unterminated {
-                    return Err(LexError::UnterminatedString(line, column));
-                }
-                tokens.push(SpannedToken {
-                    token: Token::StringLiteral(string_literal),
-                    line,
-                    column: start_column,
-                });
+                let token = read_string_literal(&mut chars, line, column)?;
+                tokens.push(token);
             }
             '0'..='9' | '-' => {
-                let start_column = column;
                 let token = read_number(char, &mut chars, line, column)?;
-                column = token.column;
-                tokens.push(SpannedToken {
-                    token: token.token,
-                    line,
-                    column: start_column,
-                });
+                tokens.push(token);
             }
             'A'..='Z' | 'a'..='z' | '_' => {
                 let start_column = column;
@@ -192,7 +153,45 @@ pub fn tokenize(source: &str) -> Result<Vec<SpannedToken>, LexError> {
     Ok(tokens)
 }
 
+fn read_string_literal(chars: &mut std::iter::Peekable<std::str::Chars>, line: usize, mut column: usize) -> Result<SpannedToken, LexError> {
+    let start_column = column;
+    let mut string_literal = String::new();
+    let mut unterminated = true;
+    while let Some(next_char) = chars.next() {
+        column += 1;
+        if next_char == '"' {
+            unterminated = false;
+            break;
+        }
+        if next_char == '\\' {
+            if let Some(escaped_char) = chars.next() {
+                column += 1;
+                match escaped_char {
+                    'n' => string_literal.push('\n'),
+                    't' => string_literal.push('\t'),
+                    '\\' => string_literal.push('\\'),
+                    '"' => string_literal.push('"'),
+                    _ => return Err(LexError::UnknownEscapeSequence(escaped_char, line, column)),
+                }
+            } else {
+                return Err(LexError::UnterminatedString(line, column));
+            }
+        } else {
+            string_literal.push(next_char);
+        }
+    }
+    if unterminated {
+        return Err(LexError::UnterminatedString(line, column));
+    }
+    Ok(SpannedToken {
+        token: Token::StringLiteral(string_literal),
+        line,
+        column: start_column,
+    })
+}
+
 fn read_number(first_char: char, chars: &mut std::iter::Peekable<std::str::Chars>, line: usize, mut column: usize) -> Result<SpannedToken, LexError> {
+    let start_column = column;
     let mut number_str = String::new();
     let mut radix = 10;
     let is_negative = first_char == '-';
@@ -233,7 +232,7 @@ fn read_number(first_char: char, chars: &mut std::iter::Peekable<std::str::Chars
     Ok(SpannedToken {
         token: Token::Immediate(val),
         line,
-        column,
+        column: start_column,
     })
 }
 
