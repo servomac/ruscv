@@ -1,13 +1,43 @@
-#[derive(Debug, PartialEq)]
-pub enum LexError {
-    UnexpectedChar(char, usize, usize),
-    UnterminatedString(usize, usize),
-    UnknownEscapeSequence(char, usize, usize),
-    InvalidNumber(String, usize, usize),
-    EmptyNumberPrefix(String, usize, usize),
-    InvalidRegister(String, usize, usize),
-    EmptyDirective(usize, usize),
-    NumericOverflow(String, usize, usize),
+use std::fmt;
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum LexErrorKind {
+    UnexpectedChar(char),
+    UnterminatedString,
+    UnknownEscapeSequence(char),
+    InvalidNumber(String),
+    EmptyNumberPrefix(String),
+    InvalidRegister(String),
+    EmptyDirective,
+    NumericOverflow(String),
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct LexError {
+    pub line: usize,
+    pub column: usize,
+    pub kind: LexErrorKind,
+}
+
+impl LexError {
+    pub fn new(line: usize, column: usize, kind: LexErrorKind) -> Self {
+        Self { line, column, kind }
+    }
+}
+
+impl fmt::Display for LexError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.kind {
+            LexErrorKind::UnexpectedChar(c) => write!(f, "Unexpected character '{}'", c),
+            LexErrorKind::UnterminatedString => write!(f, "Unterminated string literal"),
+            LexErrorKind::UnknownEscapeSequence(c) => write!(f, "Unknown escape sequence '\\{}'", c),
+            LexErrorKind::InvalidNumber(s) => write!(f, "Invalid number format: '{}'", s),
+            LexErrorKind::EmptyNumberPrefix(p) => write!(f, "Empty number prefix: '{}'", p),
+            LexErrorKind::InvalidRegister(s) => write!(f, "Invalid register name: '{}'", s),
+            LexErrorKind::EmptyDirective => write!(f, "Directives must have a name (e.g., '.word')"),
+            LexErrorKind::NumericOverflow(s) => write!(f, "Numeric value '{}' overflows i32", s),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -111,7 +141,7 @@ pub fn tokenize(source: &str) -> Result<Vec<SpannedToken>, LexError> {
                     }
                 }
                 if directive.len() == 1 {
-                    return Err(LexError::EmptyDirective(line, start_column));
+                    return Err(LexError::new(line, start_column, LexErrorKind::EmptyDirective));
                 }
                 tokens.push(SpannedToken {
                     token: Token::Directive(directive.to_lowercase()),
@@ -149,7 +179,7 @@ pub fn tokenize(source: &str) -> Result<Vec<SpannedToken>, LexError> {
                 });
             }
             _ => {
-                return Err(LexError::UnexpectedChar(char, line, column));
+                return Err(LexError::new(line, column, LexErrorKind::UnexpectedChar(char)));
             }
         }
     }
@@ -180,17 +210,17 @@ fn read_string_literal(chars: &mut std::iter::Peekable<std::str::Chars>, line: u
                     't' => string_literal.push('\t'),
                     '\\' => string_literal.push('\\'),
                     '"' => string_literal.push('"'),
-                    _ => return Err(LexError::UnknownEscapeSequence(escaped_char, line, *column)),
+                    _ => return Err(LexError::new(line, *column, LexErrorKind::UnknownEscapeSequence(escaped_char))),
                 }
             } else {
-                return Err(LexError::UnterminatedString(line, *column));
+                return Err(LexError::new(line, *column, LexErrorKind::UnterminatedString));
             }
         } else {
             string_literal.push(next_char);
         }
     }
     if unterminated {
-        return Err(LexError::UnterminatedString(line, *column));
+        return Err(LexError::new(line, *column, LexErrorKind::UnterminatedString));
     }
     Ok(SpannedToken {
         token: Token::StringLiteral(string_literal),
@@ -210,7 +240,7 @@ fn read_number(first_char: char, chars: &mut std::iter::Peekable<std::str::Chars
             Some(&c) if c.is_digit(10) => {
                 // continue to parse
             }
-            _ => return Err(LexError::UnexpectedChar('-', line, start_column)),
+            _ => return Err(LexError::new(line, start_column, LexErrorKind::UnexpectedChar('-'))),
         }
     } else {
         number_str.push(first_char);
@@ -244,7 +274,7 @@ fn read_number(first_char: char, chars: &mut std::iter::Peekable<std::str::Chars
                     Some(&c) if c.is_digit(radix) || (radix == 16 && c.is_ascii_hexdigit()) => {}
                     _ => {
                         let prefix_str = if is_negative { format!("-0{}", prefix) } else { format!("0{}", prefix) };
-                        return Err(LexError::EmptyNumberPrefix(prefix_str, line, *column));
+                        return Err(LexError::new(line, *column, LexErrorKind::EmptyNumberPrefix(prefix_str)));
                     }
                 }
             }
@@ -267,9 +297,9 @@ fn read_number(first_char: char, chars: &mut std::iter::Peekable<std::str::Chars
         Ok(v) => if is_negative { -v } else { v },
         Err(e) => {
             if e.kind() == &std::num::IntErrorKind::PosOverflow || e.kind() == &std::num::IntErrorKind::NegOverflow {
-                return Err(LexError::NumericOverflow(number_str, line, start_column));
+                return Err(LexError::new(line, start_column, LexErrorKind::NumericOverflow(number_str)));
             } else {
-                return Err(LexError::InvalidNumber(number_str, line, start_column));
+                return Err(LexError::new(line, start_column, LexErrorKind::InvalidNumber(number_str)));
             }
         }
     };
@@ -290,7 +320,7 @@ fn classify_identifier(ident: &str, line: usize, column: usize) -> Result<Token,
             if num <= 31 {
                 return Ok(Token::Register(num));
             } else {
-                return Err(LexError::InvalidRegister(ident.to_string(), line, column));
+                return Err(LexError::new(line, column, LexErrorKind::InvalidRegister(ident.to_string())));
             }
         }
     }
@@ -466,15 +496,15 @@ mod tests {
     fn test_lex_errors() {
         // Unexpected character
         let res = tokenize("add x1, x2, @");
-        assert_eq!(res.unwrap_err(), LexError::UnexpectedChar('@', 1, 13));
+        assert_eq!(res.unwrap_err(), LexError::new(1, 13, LexErrorKind::UnexpectedChar('@')));
 
         // Unterminated string
         let res = tokenize(".string \"Hello");
-        assert_eq!(res.unwrap_err(), LexError::UnterminatedString(1, 15));
+        assert_eq!(res.unwrap_err(), LexError::new(1, 15, LexErrorKind::UnterminatedString));
 
         // Unknown escape sequence
         let res = tokenize(".string \"Hello\\z\"");
-        assert_eq!(res.unwrap_err(), LexError::UnknownEscapeSequence('z', 1, 17));
+        assert_eq!(res.unwrap_err(), LexError::new(1, 17, LexErrorKind::UnknownEscapeSequence('z')));
     }
 
     #[test]
@@ -490,13 +520,13 @@ mod tests {
     #[test]
     fn test_invalid_register() {
         let res = tokenize("add x32, x1, x2");
-        assert_eq!(res.unwrap_err(), LexError::InvalidRegister("x32".to_string(), 1, 5));
+        assert_eq!(res.unwrap_err(), LexError::new(1, 5, LexErrorKind::InvalidRegister("x32".to_string())));
     }
 
     #[test]
     fn test_empty_directive() {
         let res = tokenize(". ");
-        assert_eq!(res.unwrap_err(), LexError::EmptyDirective(1, 1));
+        assert_eq!(res.unwrap_err(), LexError::new(1, 1, LexErrorKind::EmptyDirective));
     }
 
     #[test]
@@ -508,11 +538,11 @@ mod tests {
 
         // Empty prefix
         let res = tokenize("addi a0, a0, 0x");
-        assert_eq!(res.unwrap_err(), LexError::EmptyNumberPrefix("0x".to_string(), 1, 16));
+        assert_eq!(res.unwrap_err(), LexError::new(1, 16, LexErrorKind::EmptyNumberPrefix("0x".to_string())));
 
         // Negative empty prefix
         let res = tokenize("addi a0, a0, -0b");
-        assert_eq!(res.unwrap_err(), LexError::EmptyNumberPrefix("-0b".to_string(), 1, 17));
+        assert_eq!(res.unwrap_err(), LexError::new(1, 17, LexErrorKind::EmptyNumberPrefix("-0b".to_string())));
 
         // Binary
         let res = tokenize("0b1010");
@@ -523,6 +553,6 @@ mod tests {
     #[test]
     fn test_numeric_overflow() {
         let res = tokenize("2147483648"); // i32::MAX + 1
-        assert_eq!(res.unwrap_err(), LexError::NumericOverflow("2147483648".to_string(), 1, 1));
+        assert_eq!(res.unwrap_err(), LexError::new(1, 1, LexErrorKind::NumericOverflow("2147483648".to_string())));
     }
 }

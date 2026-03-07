@@ -4,6 +4,18 @@ use std::fmt;
 use crate::lexer::{SpannedToken, Token};
 
 #[derive(Debug, PartialEq, Clone)]
+pub struct ParseError {
+    pub line: usize,
+    pub message: String,
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum MemoryOffset {
     Immediate(i32),
     Label(String),
@@ -121,16 +133,14 @@ impl Parser {
     }
 
     // Consumes the expected token and advances the position
-    fn consume(&mut self, expected: &Token, error_message: &str) -> Result<Token, String> {
+    fn consume(&mut self, expected: &Token, error_message: &str) -> Result<Token, ParseError> {
         if self.check(expected) {
             Ok(self.advance())
         } else {
-            Err(format!(
-                "Error on line {}: {}. Found: {:?}",
-                self.tokens[self.position].line,
-                error_message,
-                self.peek()
-            ))
+            Err(ParseError {
+                line: self.tokens[self.position].line,
+                message: format!("{}. Found: {:?}", error_message, self.peek()),
+            })
         }
     }
 
@@ -140,7 +150,7 @@ impl Parser {
     }
 
 
-    pub fn parse(&mut self) -> Result<Vec<Statement>, String> {
+    pub fn parse(&mut self) -> Result<Vec<Statement>, ParseError> {
         let mut nodes = Vec::new();
         while !self.is_at_end() {
             match self.parse_line() {
@@ -154,7 +164,7 @@ impl Parser {
         Ok(nodes)
     }
 
-    fn parse_line(&mut self) -> Result<Option<Statement>, String> {
+    fn parse_line(&mut self) -> Result<Option<Statement>, ParseError> {
         if self.is_at_end() { return Ok(None); }
 
         let current_token = self.peek().clone();
@@ -203,15 +213,19 @@ impl Parser {
                 return Ok(None);
             }
 
-            _ => return Err(format!("Unexpected token: {:?}", current_token)),
+            _ => return Err(ParseError {
+                line,
+                message: format!("Unexpected token: {:?}", current_token)
+            }),
 
         };
 
         Ok(Some(Statement { kind: statement_kind, line }))
     }
 
-    fn parse_operand(&mut self) -> Result<Operand, String> {
+    fn parse_operand(&mut self) -> Result<Operand, ParseError> {
         let current_token = self.peek().clone();
+        let line = self.tokens[self.position].line;
 
         match current_token {
             Token::Register(reg) => {
@@ -270,14 +284,14 @@ impl Parser {
                 }
             }
 
-            _ => Err(format!(
-                "An operand was expected (register, inmediate or label), but was not found: {:?}",
-                current_token
-            )),
+            _ => Err(ParseError {
+                line,
+                message: format!("An operand was expected (register, immediate or label), but was not found: {:?}", current_token),
+            }),
         }
     }
 
-    fn parse_directive_operand(&mut self) -> Result<Operand, String> {
+    fn parse_directive_operand(&mut self) -> Result<Operand, ParseError> {
         let token = self.peek().clone();
 
         match token {

@@ -97,16 +97,20 @@ pub fn run() -> Result<(), io::Error> {
 
 fn compile_and_load(app: &mut App) -> Result<(), String> {
     let source = app.editor.lines().join("\n");
+
     let tokens = match lexer::tokenize(&source) {
         Ok(tokens) => tokens,
-        Err(e) => return Err(format!("Lex error: {:?}", e)),
+        Err(e) => return Err(format!("Line {}: {}", e.line, e)),
     };
-    // TODO lex errors should be reported to the user in a more user-friendly way, as parse errors
+
     let mut parser = parser::Parser::new(tokens);
-    let statements = parser.parse().map_err(|_| "Parse error".to_string())?;
+    let statements = match parser.parse() {
+        Ok(stmt) => stmt,
+        Err(e) => return Err(format!("Line {}: {}", e.line, e)),
+    };
 
     let mut symbol_table = symbols::SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
-    symbol_table.build(&statements).map_err(|_| "Symbol error".to_string())?;
+    symbol_table.build(&statements).map_err(|e| format!("Symbol error: {}", e))?;
 
     let mut assembler = assembler::Assembler::new(config::TEXT_BASE, config::DATA_BASE);
     if let Err(errors) = assembler.assemble(&statements, &symbol_table) {
