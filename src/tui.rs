@@ -97,7 +97,10 @@ pub fn run() -> Result<(), io::Error> {
 
 fn compile_and_load(app: &mut App) -> Result<(), String> {
     let source = app.editor.lines().join("\n");
-    let tokens = lexer::tokenize(&source);
+    let tokens = match lexer::tokenize(&source) {
+        Ok(tokens) => tokens,
+        Err(e) => return Err(format!("Lex error: {:?}", e)),
+    };
     let mut parser = parser::Parser::new(tokens);
     let statements = parser.parse().map_err(|_| "Parse error".to_string())?;
 

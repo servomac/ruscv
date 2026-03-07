@@ -146,7 +146,7 @@ mod tests {
             text: .asciz \"This is a test\"
         ";
 
-        let tokens = tokenize(source);
+        let tokens = tokenize(source).unwrap();
         let mut parser = Parser::new(tokens);
         let statements = parser.parse().unwrap();
 
@@ -169,7 +169,7 @@ mod tests {
             my_aligned_label: .byte 0xFF
         "#;
 
-        let tokens = tokenize(source);
+        let tokens = tokenize(source).unwrap();
         let mut parser = Parser::new(tokens);
         let statements = parser.parse().unwrap();
 
@@ -187,7 +187,7 @@ mod tests {
             msg: .asciz "Hello!"
         "#;
 
-        let tokens = tokenize(source);
+        let tokens = tokenize(source).unwrap();
         let mut parser = Parser::new(tokens);
         let statements = parser.parse().unwrap();
 

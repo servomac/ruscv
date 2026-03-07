@@ -298,7 +298,7 @@ mod tests {
 
     #[test]
     fn test_r_instruction_parsing() {
-        let tokens = tokenize("add x1, x2, x3");
+        let tokens = tokenize("add x1, x2, x3").unwrap();
         let mut parser = Parser::new(tokens);
         let nodes = parser.parse().unwrap();
         assert_eq!(nodes.len(), 1);
@@ -312,7 +312,7 @@ mod tests {
 
     #[test]
     fn test_i_instruction_parsing() {
-        let tokens = tokenize("addi x1, x2, 10");
+        let tokens = tokenize("addi x1, x2, 10").unwrap();
         let mut parser = Parser::new(tokens);
         let nodes = parser.parse().unwrap();
         assert_eq!(nodes.len(), 1);
@@ -326,7 +326,7 @@ mod tests {
 
     #[test]
     fn test_s_instruction_parsing() {
-        let tokens = tokenize("sw x1, 4(x2)");
+        let tokens = tokenize("sw x1, 4(x2)").unwrap();
         let mut parser = Parser::new(tokens);
         let nodes = parser.parse().unwrap();
         assert_eq!(nodes.len(), 1);
@@ -339,8 +339,7 @@ mod tests {
 
     #[test]
     fn test_label_parsing() {
-        let tokens = tokenize("loop:\nadd x1, x2, x3");
-        println!("{:#?}", tokens);
+        let tokens = tokenize("loop:\nadd x1, x2, x3").unwrap();
         let mut parser = Parser::new(tokens);
         let nodes = parser.parse().unwrap();
         assert_eq!(nodes.len(), 2);
@@ -356,7 +355,7 @@ mod tests {
 
     #[test]
     fn test_directive_parsing() {
-        let tokens = tokenize(".data\nmyVar: .word 42");
+        let tokens = tokenize(".data\nmyVar: .word 42").unwrap();
         let mut parser = Parser::new(tokens);
         let nodes = parser.parse().unwrap();
         assert_eq!(nodes.len(), 3);
@@ -372,7 +371,7 @@ mod tests {
 
     #[test]
     fn test_directive_with_string_parsing() {
-        let tokens = tokenize(".asciiz \"Hello, world!\"");
+        let tokens = tokenize(".asciiz \"Hello, world!\"").unwrap();
         let mut parser = Parser::new(tokens);
         let nodes = parser.parse().unwrap();
         assert_eq!(nodes.len(), 1);
@@ -384,7 +383,7 @@ mod tests {
 
     #[test]
     fn test_label_in_memory_operand_parsing() {
-        let tokens = tokenize("sw x1, my_label(x2)");
+        let tokens = tokenize("sw x1, my_label(x2)").unwrap();
         let mut parser = Parser::new(tokens);
         let nodes = parser.parse().unwrap();
         assert_eq!(nodes.len(), 1);

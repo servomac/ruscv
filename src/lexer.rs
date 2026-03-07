@@ -1,3 +1,11 @@
+#[derive(Debug, PartialEq)]
+pub enum LexError {
+    UnexpectedChar(char, usize, usize),
+    UnterminatedString(usize, usize),
+    UnknownEscapeSequence(char, usize, usize),
+    InvalidNumber(String, usize, usize),
+}
+
 #[derive(Debug)]
 pub struct SpannedToken {
     pub token: Token,
@@ -21,9 +29,7 @@ pub enum Token {
     Eof,
 }
 
-pub fn tokenize(source: &str) -> Vec<SpannedToken> {
-    // TODO return Result<Vec<SpannedToken>, LexError> instead of panicking on errors
-    // TODO handle tabs and other whitespace correctly for column counting
+pub fn tokenize(source: &str) -> Result<Vec<SpannedToken>, LexError> {
     let mut tokens = Vec::new();
     let mut line = 1;
     let mut column = 1;
@@ -87,6 +93,7 @@ pub fn tokenize(source: &str) -> Vec<SpannedToken> {
                 column += 1;
             }
             '.' => {
+                let start_column = column;
                 let mut directive = char.to_string();
                 while let Some(&next_char) = chars.peek() {
                     if next_char.is_alphanumeric() || next_char == '_' {
@@ -97,19 +104,22 @@ pub fn tokenize(source: &str) -> Vec<SpannedToken> {
                         break;
                     }
                 }
+                column += 1;
                 tokens.push(SpannedToken {
                     token: Token::Directive(directive),
                     line,
-                    column,
+                    column: start_column,
                 });
             }
             '"' => {
                 // TODO extract to read_string_literal function
-                // TODO column is the end of the string, not the start, fix it
+                let start_column = column;
                 let mut string_literal = String::new();
+                let mut unterminated = true;
                 while let Some(next_char) = chars.next() {
                     column += 1;
                     if next_char == '"' {
+                        unterminated = false;
                         break;
                     }
                     if next_char == '\\' {
@@ -120,27 +130,36 @@ pub fn tokenize(source: &str) -> Vec<SpannedToken> {
                                 't' => string_literal.push('\t'),
                                 '\\' => string_literal.push('\\'),
                                 '"' => string_literal.push('"'),
-                                _ => panic!("Unknown escape sequence \\{}", escaped_char),
+                                _ => return Err(LexError::UnknownEscapeSequence(escaped_char, line, column)),
                             }
                         } else {
-                            panic!("Unterminated string literal at line {}, column {}", line, column);
+                            return Err(LexError::UnterminatedString(line, column));
                         }
                     } else {
                         string_literal.push(next_char);
                     }
                 }
+                if unterminated {
+                    return Err(LexError::UnterminatedString(line, column));
+                }
                 tokens.push(SpannedToken {
                     token: Token::StringLiteral(string_literal),
                     line,
-                    column,
+                    column: start_column,
                 });
             }
             '0'..='9' | '-' => {
-                let token = read_number(char, &mut chars, line, column);
+                let start_column = column;
+                let token = read_number(char, &mut chars, line, column)?;
                 column = token.column;
-                tokens.push(token);
+                tokens.push(SpannedToken {
+                    token: token.token,
+                    line,
+                    column: start_column,
+                });
             }
             'A'..='Z' | 'a'..='z' | '_' => {
+                let start_column = column;
                 let mut identifier = char.to_string();
                 while let Some(&next_char) = chars.peek() {
                     if next_char.is_alphanumeric() || next_char == '_' {
@@ -151,14 +170,15 @@ pub fn tokenize(source: &str) -> Vec<SpannedToken> {
                         break;
                     }
                 }
+                column += 1;
                 tokens.push(SpannedToken {
                     token: classify_identifier(&identifier),
                     line,
-                    column,
+                    column: start_column,
                 });
             }
             _ => {
-                panic!("Unexpected character '{}' at line {}, column {}", char, line, column);
+                return Err(LexError::UnexpectedChar(char, line, column));
             }
         }
     }
@@ -169,11 +189,10 @@ pub fn tokenize(source: &str) -> Vec<SpannedToken> {
         column,
     });
 
-    tokens
+    Ok(tokens)
 }
 
-fn read_number(first_char: char, chars: &mut std::iter::Peekable<std::str::Chars>, line: usize, mut column: usize) -> SpannedToken {
-    // TODO handle errors properly instead of panicking
+fn read_number(first_char: char, chars: &mut std::iter::Peekable<std::str::Chars>, line: usize, mut column: usize) -> Result<SpannedToken, LexError> {
     let mut number_str = String::new();
     let mut radix = 10;
     let is_negative = first_char == '-';
@@ -194,6 +213,7 @@ fn read_number(first_char: char, chars: &mut std::iter::Peekable<std::str::Chars
     } else {
         number_str.push(next_digit);
     }
+    column += 1;
 
     while let Some(&next) = chars.peek() {
         if next.is_digit(radix) || (radix == 16 && next.is_ascii_hexdigit()) {
@@ -205,15 +225,16 @@ fn read_number(first_char: char, chars: &mut std::iter::Peekable<std::str::Chars
         }
     }
 
-    // TODO check fail
-    let mut val = i32::from_str_radix(&number_str, radix).unwrap_or(0);
+    let mut val = i32::from_str_radix(&number_str, radix)
+        .map_err(|_| LexError::InvalidNumber(number_str, line, column))?;
+
     if is_negative { val = -val; }
 
-    SpannedToken {
+    Ok(SpannedToken {
         token: Token::Immediate(val),
         line,
         column,
-    }
+    })
 }
 
 fn classify_identifier(ident: &str) -> Token {
@@ -271,7 +292,7 @@ mod tests {
     #[test]
     fn test_tokenize() {
         let source = "add x2, zero, x3\nsub x4, x5, x6";
-        let tokens = tokenize(source);
+        let tokens = tokenize(source).expect("Should tokenize successfully");
 
         assert_eq!(tokens.len(), 14); // 13 tokens + Eof
 
@@ -294,7 +315,7 @@ mod tests {
     #[test]
     fn test_tokenize_label_and_comment() {
         let source = "loop: add x1, x1, x2 # This is a comment\n";
-        let tokens = tokenize(source);
+        let tokens = tokenize(source).expect("Should tokenize successfully");
 
         assert_eq!(tokens.len(), 10); // 9 tokens + Eof
 
@@ -313,7 +334,7 @@ mod tests {
     #[test]
     fn test_directives() {
         let source = ".text\n.align 2\n.global main";
-        let tokens = tokenize(source);
+        let tokens = tokenize(source).expect("Should tokenize successfully");
         assert_eq!(tokens.len(), 8); // 7 tokens + Eof
         assert_eq!(tokens[0].token, Token::Directive(".text".to_string()));
         assert_eq!(tokens[1].token, Token::Newline);
@@ -328,7 +349,7 @@ mod tests {
     #[test]
     fn test_strings() {
         let source = r#".string "Hello, %s!\n""#;
-        let tokens = tokenize(source);
+        let tokens = tokenize(source).expect("Should tokenize successfully");
         assert_eq!(tokens.len(), 3); // 2 tokens + Eof
         assert_eq!(tokens[0].token, Token::Directive(".string".to_string()));
         assert_eq!(tokens[1].token, Token::StringLiteral("Hello, %s!\n".to_string()));
@@ -337,7 +358,7 @@ mod tests {
     #[test]
     fn test_immediate_negative_numbers() {
         let source = "addi sp, sp, -16";
-        let tokens = tokenize(source);
+        let tokens = tokenize(source).expect("Should tokenize successfully");
         assert_eq!(tokens.len(), 7); // 6 tokens + Eof
         assert_eq!(tokens[0].token, Token::Instruction("addi".to_string()));
         assert_eq!(tokens[1].token, Token::Register(2));
@@ -350,7 +371,7 @@ mod tests {
     #[test]
     fn test_inmediate_hexadecimal() {
         let source = "addi a0, sp, 0xFF";
-        let tokens = tokenize(source);
+        let tokens = tokenize(source).expect("Should tokenize successfully");
         assert_eq!(tokens.len(), 7); // 6 tokens + Eof
         assert_eq!(tokens[0].token, Token::Instruction("addi".to_string()));
         assert_eq!(tokens[1].token, Token::Register(10));
@@ -360,4 +381,19 @@ mod tests {
         assert_eq!(tokens[5].token, Token::Immediate(255)); // 0xFF is 255 in decimal
     }
     // TODO test lines and columns in SpannedToken
+
+    #[test]
+    fn test_lex_errors() {
+        // Unexpected character
+        let res = tokenize("add x1, x2, @");
+        assert_eq!(res.unwrap_err(), LexError::UnexpectedChar('@', 1, 13));
+
+        // Unterminated string
+        let res = tokenize(".string \"Hello");
+        assert_eq!(res.unwrap_err(), LexError::UnterminatedString(1, 14));
+
+        // Unknown escape sequence
+        let res = tokenize(".string \"Hello\\z\"");
+        assert_eq!(res.unwrap_err(), LexError::UnknownEscapeSequence('z', 1, 16));
+    }
 }
