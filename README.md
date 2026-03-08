@@ -62,6 +62,8 @@ cargo run -- path/to/file.asm
 | **F9** | Cycle Number Format (Hex, Binary, Decimal) |
 | **Tab** | Cycle Focus (Editor, Registers, Memory, Logs) |
 | **Arrows** | Edit code or Scroll focused pane |
+| **T / D / S** | (In Memory pane) Jump to .text / .data / .stack |
+| **C** | (In Memory pane) Jump to current PC |
 | **Esc** | Quit application |
 
 ## Running Tests

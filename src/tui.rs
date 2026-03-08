@@ -245,6 +245,10 @@ fn run_app<B: ratatui::backend::Backend>(
                         match key.code {
                             KeyCode::Up => app.memory_scroll = app.memory_scroll.saturating_sub(4),
                             KeyCode::Down => app.memory_scroll = app.memory_scroll.wrapping_add(4),
+                            KeyCode::Char('t') | KeyCode::Char('T') => app.memory_scroll = config::TEXT_BASE,
+                            KeyCode::Char('d') | KeyCode::Char('D') => app.memory_scroll = config::DATA_BASE,
+                            KeyCode::Char('s') | KeyCode::Char('S') => app.memory_scroll = config::STACK_BASE.saturating_sub(64),
+                            KeyCode::Char('c') | KeyCode::Char('C') => app.memory_scroll = app.processor.pc(),
                             _ => {}
                         }
                     }
@@ -363,12 +367,22 @@ mod ui {
             }
         }
 
+        let section = if mem_start >= config::STACK_BASE.saturating_sub(config::STACK_SIZE as u32) {
+            "stack"
+        } else if mem_start >= config::DATA_BASE {
+            "data"
+        } else if mem_start >= config::TEXT_BASE {
+            "text"
+        } else {
+            "unmapped"
+        };
+
         let mem_style = if app.active_pane == Pane::Memory { Style::default().fg(Color::Yellow) } else { Style::default() };
         let mem_p = Paragraph::new(mem_lines).block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(mem_style)
-                .title(format!("Memory (0x{:08x})", mem_start)),
+                .title(format!("Memory (.{}) (0x{:08x})", section, mem_start)),
         );
         f.render_widget(mem_p, middle_chunks[2]);
 
