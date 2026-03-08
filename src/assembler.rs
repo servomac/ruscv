@@ -199,14 +199,15 @@ fn encode_r_type(opcode: u8, funct3: u8, funct7: u8, ops: &[Operand]) -> Result<
 
 fn encode_i_type(opcode: u8, funct3: u8, ops: &[Operand], sym_table: &SymbolTable) -> Result<u32, String> {
     let (rd, rs1, base_op) = match (opcode, ops) {
-        // load y jalr: rd, offset(rs1)
-        (0x03 | 0x67, [Operand::Register(rd), mem @ Operand::Memory { reg, .. }]) => {
+        // load: rd, offset(rs1)
+        (0x03, [Operand::Register(rd), mem @ Operand::Memory { reg, .. }]) => {
             (*rd, *reg, mem)
         },
-        // alu immediate: rd, rs1, imm
-        (0x13, [Operand::Register(rd), Operand::Register(rs1), imm]) => {
+        // alu immediate and jalr: rd, rs1, imm
+        (0x13 | 0x67, [Operand::Register(rd), Operand::Register(rs1), imm]) => {
             (*rd, *rs1, imm)
         },
+        // TODO: jalr with memory offset, is a pseudo-instruction, so allow both: 3 parameters with inmediate or 2 with memory offset
         _ => return Err("Invalid operands for I-type instruction".to_string()),
     };
 
