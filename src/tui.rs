@@ -49,8 +49,24 @@ pub struct App<'a> {
 }
 
 impl<'a> App<'a> {
-    pub fn new() -> App<'a> {
-        let mut editor = TextArea::default();
+    pub fn new(initial_file: Option<String>) -> App<'a> {
+        let mut logs = Vec::new();
+        let mut editor = if let Some(path) = initial_file {
+            match std::fs::read_to_string(&path) {
+                Ok(content) => {
+                    let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+                    logs.push(format!("Loaded file: {}", path));
+                    TextArea::new(lines)
+                }
+                Err(e) => {
+                    logs.push(format!("Error loading file {}: {}", path, e));
+                    TextArea::default()
+                }
+            }
+        } else {
+            TextArea::default()
+        };
+
         editor.set_block(
             ratatui::widgets::Block::default()
                 .borders(ratatui::widgets::Borders::ALL)
@@ -65,13 +81,13 @@ impl<'a> App<'a> {
             mode: RunMode::Editing,
             registers_scroll: 0,
             memory_scroll: config::TEXT_BASE,
-            logs: vec![],
+            logs,
             should_quit: false,
         }
     }
 }
 
-pub fn run() -> Result<(), io::Error> {
+pub fn run(initial_file: Option<String>) -> Result<(), io::Error> {
     // setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -80,7 +96,7 @@ pub fn run() -> Result<(), io::Error> {
     let mut terminal = Terminal::new(backend)?;
 
     // create app and run it
-    let app = App::new();
+    let app = App::new(initial_file);
     let res = run_app(&mut terminal, app);
 
     // restore terminal
@@ -366,5 +382,24 @@ mod ui {
                 .title("Execution Logs"),
         );
         f.render_widget(logs, chunks[2]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_app_load_file() {
+        let app = App::new(Some("Cargo.toml".to_string()));
+        assert!(!app.editor.lines().is_empty());
+        assert!(app.logs[0].contains("Loaded file: Cargo.toml"));
+    }
+
+    #[test]
+    fn test_app_load_non_existent_file() {
+        let app = App::new(Some("non_existent_file.asm".to_string()));
+        assert_eq!(app.editor.lines().len(), 1); // Default empty line
+        assert!(app.logs[0].contains("Error loading file"));
     }
 }

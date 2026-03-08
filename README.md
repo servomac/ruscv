@@ -46,6 +46,12 @@ To start the interactive emulator, simply run:
 cargo run
 ```
 
+You can also pass an optional assembly file to be loaded directly into the editor:
+
+```bash
+cargo run -- path/to/file.asm
+```
+
 ### Controls
 
 | Key | Action |

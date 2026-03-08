@@ -7,5 +7,7 @@ mod processor;
 mod tui;
 
 fn main() -> Result<(), std::io::Error> {
-    tui::run()
+    let args: Vec<String> = std::env::args().collect();
+    let initial_file = args.get(1).cloned();
+    tui::run(initial_file)
 }
