@@ -13,7 +13,10 @@ A RISC-V Assembler and Emulator implementation in Rust.
   - Memory operations (Loads and Stores).
   - Control Flow (Branches, `JAL`, `JALR`).
   - Upper Immediate instructions (`LUI`, `AUIPC`).
-- **Assembler**: Supports basic assembly syntax, labels, and directives (`.text`, `.data`, `.word`, `.asciz`, `.align`).
+- **Assembler**: Supports basic assembly syntax, labels, and a variety of directives for memory allocation and section management:
+  - **Sections**: `.text`, `.data`.
+  - **Data**: `.byte`, `.half`, `.word`, `.ascii`, `.asciz`, `.string`, `.space`.
+  - **Alignment**: `.align`.
 - **Comprehensive Error Handling**: The assembler identifies and reports multiple errors across the source file instead of failing at the first encountered issue.
 - **Unit Tested**: Extensively verified with a suite of unit tests for instruction encoding, decoding, and execution state transitions.
 
@@ -48,6 +51,7 @@ cargo run
 | Key | Action |
 | --- | --- |
 | **F5** | Assemble and Run to completion / Halted |
+| **F2** | Assemble and Load (Reset CPU state) |
 | **F10** | Assemble and Step one instruction |
 | **F9** | Cycle Number Format (Hex, Binary, Decimal) |
 | **Tab** | Cycle Focus (Editor, Registers, Memory, Logs) |

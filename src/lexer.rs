@@ -293,14 +293,15 @@ fn read_number(first_char: char, chars: &mut std::iter::Peekable<std::str::Chars
         }
     }
 
-    let val = match i32::from_str_radix(&number_str, radix) {
-        Ok(v) => if is_negative { -v } else { v },
-        Err(e) => {
-            if e.kind() == &std::num::IntErrorKind::PosOverflow || e.kind() == &std::num::IntErrorKind::NegOverflow {
-                return Err(LexError::new(line, start_column, LexErrorKind::NumericOverflow(number_str)));
-            } else {
-                return Err(LexError::new(line, start_column, LexErrorKind::InvalidNumber(number_str)));
-            }
+    let val = if is_negative {
+        match i32::from_str_radix(&number_str, radix) {
+            Ok(v) => -v,
+            Err(_) => return Err(LexError::new(line, start_column, LexErrorKind::NumericOverflow(number_str))),
+        }
+    } else {
+        match u32::from_str_radix(&number_str, radix) {
+            Ok(v) => v as i32,
+            Err(_) => return Err(LexError::new(line, start_column, LexErrorKind::NumericOverflow(number_str))),
         }
     };
 
@@ -343,7 +344,8 @@ fn classify_identifier(ident: &str, line: usize, column: usize) -> Result<Token,
     if is_instruction {
         Ok(Token::Instruction(lower_ident))
     } else {
-        Ok(Token::Label(ident.to_string())) // Labels are case-sensitive usually, but we preserve original case
+        // Labels are case-sensitive usually, we preserve original case
+        Ok(Token::Label(ident.to_string()))
     }
 }
 
@@ -552,7 +554,18 @@ mod tests {
 
     #[test]
     fn test_numeric_overflow() {
-        let res = tokenize("2147483648"); // i32::MAX + 1
-        assert_eq!(res.unwrap_err(), LexError::new(1, 1, LexErrorKind::NumericOverflow("2147483648".to_string())));
+        // Now we allow up to u32::MAX for positive literals (interpreted as bit patterns)
+        let res = tokenize("4294967296"); // u32::MAX + 1
+        assert_eq!(res.unwrap_err(), LexError::new(1, 1, LexErrorKind::NumericOverflow("4294967296".to_string())));
+
+        // Negative numbers are still restricted to i32 range
+        let res = tokenize("-2147483649"); // i32::MIN - 1
+        // number_str in error kind does not include the '-' sign
+        assert_eq!(res.unwrap_err(), LexError::new(1, 1, LexErrorKind::NumericOverflow("2147483649".to_string())));
+
+        // Verify hex bit pattern support (0xDEADBEEF)
+        let res = tokenize("0xDEADBEEF");
+        let tokens = res.expect("Should tokenize successfully");
+        assert_eq!(tokens[0].token, Token::Immediate(-559038737)); // cast to i32
     }
 }

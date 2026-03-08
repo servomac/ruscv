@@ -76,10 +76,38 @@ impl Assembler {
                         current_section = name.as_str();
                         continue; // No bytes to emit for section directives
                     }
+
+                    if name == ".align" {
+                        if let Some(Operand::Immediate(pow)) = ops.get(0) {
+                            let alignment = 2u32.pow(*pow as u32);
+                            let padding = (alignment - (addr % alignment)) % alignment;
+                            let padding_bytes = vec![0u8; padding as usize];
+
+                            if current_section == ".text" {
+                                self.text_bin.extend_from_slice(&padding_bytes);
+                                current_pc += padding;
+                            } else {
+                                self.data_bin.extend_from_slice(&padding_bytes);
+                                data_pc += padding;
+                            }
+                            continue;
+                        } else {
+                            errors.push(AssemblerError::new(stmt.line, "Directive .align requires an immediate value".to_string()));
+                            continue;
+                        }
+                    }
+
                     match emit_data_bytes(name, ops) {
                         Ok(bytes) => {
-                            self.data_bin.extend_from_slice(&bytes);
-                            data_pc += bytes.len() as u32;
+                            if current_section == ".text" {
+                                // TODO doubt: this seems to let me put data in the text section with some directives.. this is ok??
+                                // current assemblers allows it (i.e. GNU AS), but maybe I should launch a warning or be more restrictive
+                                self.text_bin.extend_from_slice(&bytes);
+                                current_pc += bytes.len() as u32;
+                            } else {
+                                self.data_bin.extend_from_slice(&bytes);
+                                data_pc += bytes.len() as u32;
+                            }
                         }
                         Err(msg) => {
                             errors.push(AssemblerError::new(stmt.line, msg));
@@ -368,16 +396,60 @@ fn encode_j_type(
 }
 
 fn emit_data_bytes(name: &str, ops: &[Operand]) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    // TODO doubt: should warn the user if the operand does not fit the target size? i.e. "Value {} out of range for .byte"
     match name {
-        ".word" => {
-            if let Some(Operand::Immediate(val)) = ops.get(0) {
-                Ok(val.to_le_bytes().to_vec())
-            } else {
-                Err("Invalid operand for .word directive: expected immediate value".to_string())
+        ".byte" => {
+            for op in ops {
+                match op {
+                    Operand::Immediate(val) => bytes.push(*val as u8),
+                    _ => return Err("Invalid operand for .byte: expected immediate".to_string()),
+                }
             }
         }
-        _ => Err(format!("Unsupported directive '{}'", name)),
+        ".half" => {
+            for op in ops {
+                match op {
+                    Operand::Immediate(val) => bytes.extend_from_slice(&(*val as u16).to_le_bytes()),
+                    _ => return Err("Invalid operand for .half: expected immediate".to_string()),
+                }
+            }
+        }
+        ".word" => {
+            for op in ops {
+                match op {
+                    Operand::Immediate(val) => bytes.extend_from_slice(&(*val as u32).to_le_bytes()),
+                    _ => return Err("Invalid operand for .word: expected immediate".to_string()),
+                }
+            }
+        }
+        ".ascii" | ".asciz" | ".string" => {
+            let has_null = name != ".ascii";
+            for op in ops {
+                match op {
+                    Operand::StringLiteral(s) => {
+                        bytes.extend_from_slice(s.as_bytes());
+                        if has_null {
+                            bytes.push(0);
+                        }
+                    }
+                    _ => return Err(format!("Invalid operand for {}: expected string literal", name)),
+                }
+            }
+        }
+        ".space" => {
+            if let Some(Operand::Immediate(val)) = ops.get(0) {
+                if *val < 0 {
+                    return Err(".space requires a positive value".to_string());
+                }
+                bytes.resize(bytes.len() + *val as usize, 0);
+            } else {
+                return Err(".space requires an immediate value".to_string());
+            }
+        }
+        _ => return Err(format!("Unsupported directive '{}'", name)),
     }
+    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -599,7 +671,7 @@ mod tests {
         let errors = result.unwrap_err();
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].line, 40);
-        assert!(errors[0].message.contains("Invalid operand for .word directive"));
+        assert!(errors[0].message.contains("Invalid operand for .word"));
     }
 
     #[test]
@@ -840,5 +912,34 @@ mod tests {
                 0b00000000, // 0x00: imm[31:20]
             ]
         );
+    }
+
+    #[test]
+    fn test_extended_directives() {
+        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let mut sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
+        let source = r#"
+            .data
+            .byte 1, 2, 3
+            .half 0x1234, 0x5678
+            .word 0xDEADBEEF
+            .asciz "RISC-V"
+            .align 2
+            .word 42
+        "#;
+        let tokens = crate::lexer::tokenize(source).unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let statements = parser.parse().unwrap();
+        sym_table.build(&statements).unwrap();
+
+        assembler.assemble(&statements, &sym_table).expect("Assembly should succeed");
+
+        assert_eq!(assembler.data_bin.len(), 24);
+        assert_eq!(assembler.data_bin[0..3], [1, 2, 3]);
+        assert_eq!(assembler.data_bin[3..7], [0x34, 0x12, 0x78, 0x56]);
+        assert_eq!(assembler.data_bin[7..11], [0xEF, 0xBE, 0xAD, 0xDE]);
+        assert_eq!(assembler.data_bin[11..18], *b"RISC-V\0");
+        assert_eq!(assembler.data_bin[18..20], [0, 0]);
+        assert_eq!(assembler.data_bin[20..24], [42, 0, 0, 0]);
     }
 }
