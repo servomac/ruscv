@@ -326,11 +326,11 @@ mod ui {
 
         // Memory
         let mem_start = app.memory_scroll;
-        let mem_size_words = 16; 
-        
+        let mem_size_words = middle_chunks[2].height.saturating_sub(2) as u32;
+
         // We use a Vec of Lines so we can color individual addresses, such as the active PC
         let mut mem_lines: Vec<Line> = Vec::new();
-        
+
         for i in 0..mem_size_words {
             let addr = mem_start + (i * 4);
             match app.processor.read_memory_word(addr) {
@@ -368,7 +368,7 @@ mod ui {
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(mem_style)
-                .title("Memory"),
+                .title(format!("Memory (0x{:08x})", mem_start)),
         );
         f.render_widget(mem_p, middle_chunks[2]);
 

@@ -166,9 +166,12 @@ enum Instruction {
 
 impl Processor {
     pub fn new(text_base: u32, data_base: u32, stack_base: u32, stack_size: usize) -> Self {
+        let mut registers = [0; config::NUM_REGISTERS];
+        registers[2] = stack_base; // x2 is the architectural stack pointer (sp) in RISC-V
+
         Processor {
-            pc: 0,                      // filled by load
-            registers: [0; config::NUM_REGISTERS],
+            pc: text_base,              // Default starts at text_base
+            registers,
             memory: Memory {
                 text: Vec::new(),       // filled by load
                 data: Vec::new(),       // filled by load
@@ -184,13 +187,16 @@ impl Processor {
         self.memory.text = text.clone();
         self.memory.data = data.clone();
         self.pc = self.memory.text_base;
+        // TODO Optionally reset registers or just SP here?
+        // Given reset() does it, we keep load focused on the memory load and PC reset.
     }
 
     pub fn reset(&mut self) {
         self.pc = self.memory.text_base;
         self.registers = [0; config::NUM_REGISTERS];
-        // Stack and other memory are effectively overwritten dynamically;
-        // but resetting registers and PC is enough for a clean restart from loaded state.
+        self.registers[2] = self.memory.stack_base; // Initialize SP (x2)
+        // Note: Stack and other memory are effectively overwritten dynamically;
+        // but resetting registers and PC is enough for a clean restart.
     }
 
     pub fn step(&mut self) -> Result<(), StepError> {
@@ -1013,5 +1019,18 @@ mod tests {
         p.execute(Instruction::Auipc { rd: 1, imm: 0x12345000 }).unwrap();
         // when PC=0, result is just imm
         assert_eq!(p.read_register(1), 0x12345000);
+    }
+    #[test]
+    fn test_processor_initializes_sp() {
+        let text_base = 0x1000;
+        let data_base = 0x2000;
+        let stack_base = 0x7FFF_FFF0;
+        let stack_size = 1024;
+        let mut p = Processor::new(text_base, data_base, stack_base, stack_size);
+        assert_eq!(p.registers[2], stack_base);
+
+        p.registers[2] = 0x1234;
+        p.reset();
+        assert_eq!(p.registers[2], stack_base);
     }
 }
