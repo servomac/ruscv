@@ -287,6 +287,10 @@ fn resolve_memory_offset(offset: &MemoryOffset, sym_table: &SymbolTable) -> Resu
         MemoryOffset::Label(name) => sym_table.get_address(name)
             .map(|addr| addr as i32)
             .ok_or_else(|| format!("Unknown label '{}'", name)),
+        MemoryOffset::Modifier(_, _) => {
+            // TODO: Implement relocation support for modifiers in the assembler
+            Err("Modifiers are not yet supported in the assembler".to_string())
+        }
     }
 }
 

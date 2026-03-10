@@ -1,7 +1,7 @@
 use std::mem::discriminant;
 use std::fmt;
 
-use crate::lexer::{SpannedToken, Token};
+use crate::lexer::{SpannedToken, Token, ModifierKind};
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ParseError {
@@ -19,6 +19,7 @@ impl fmt::Display for ParseError {
 pub enum MemoryOffset {
     Immediate(i32),
     Label(String),
+    Modifier(ModifierKind, String),
 }
 
 impl fmt::Display for MemoryOffset {
@@ -26,6 +27,13 @@ impl fmt::Display for MemoryOffset {
         match self {
             MemoryOffset::Immediate(n) => write!(f, "{}", n),
             MemoryOffset::Label(s) => write!(f, "{}", s),
+            MemoryOffset::Modifier(kind, symbol) => {
+                let kind_str = match kind {
+                    ModifierKind::Hi => "hi",
+                    ModifierKind::Lo => "lo",
+                };
+                write!(f, "%{}({})", kind_str, symbol)
+            }
         }
     }
 }
@@ -36,6 +44,7 @@ pub enum Operand {
     Immediate(i32),
     Label(String),
     StringLiteral(String),
+    Modifier(ModifierKind, String),
     Memory { offset: MemoryOffset, reg: u8 },
 }
 
@@ -46,6 +55,13 @@ impl fmt::Display for Operand {
             Operand::Immediate(n) => write!(f, "{}", n),
             Operand::Label(s) => write!(f, "{}", s),
             Operand::StringLiteral(s) => write!(f, "\"{}\"", s),
+            Operand::Modifier(kind, symbol) => {
+                let kind_str = match kind {
+                    ModifierKind::Hi => "hi",
+                    ModifierKind::Lo => "lo",
+                };
+                write!(f, "%{}({})", kind_str, symbol)
+            }
             Operand::Memory { offset, reg } => write!(f, "{}(x{})", offset, reg),
         }
     }
@@ -149,7 +165,7 @@ impl Parser {
         matches!(self.peek(), Token::Eof)
     }
 
-
+    // Parses the token stream into a list of statements
     pub fn parse(&mut self) -> Result<Vec<Statement>, ParseError> {
         let mut nodes = Vec::new();
         while !self.is_at_end() {
@@ -284,6 +300,13 @@ impl Parser {
                 }
             }
 
+            Token::Modifier(kind, symbol) => {
+                self.advance();
+                // TODO: Handle memory addressing with modifiers (e.g., %lo(label)(a1))
+                // This would involve checking for Token::LParenthesis here.
+                Ok(Operand::Modifier(kind, symbol))
+            }
+
             _ => Err(ParseError {
                 line,
                 message: format!("An operand was expected (register, immediate or label), but was not found: {:?}", current_token),
@@ -408,4 +431,25 @@ mod tests {
         assert_eq!(nodes[0].line, 1);
     }
 
+    #[test]
+    fn test_modifier_parsing() {
+        let tokens = tokenize("lui x1, %hi(label)").unwrap();
+        let mut parser = Parser::new(tokens);
+        let nodes = parser.parse().unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].kind, StatementKind::Instruction("lui".to_string(), vec![
+            Operand::Register(1),
+            Operand::Modifier(ModifierKind::Hi, "label".to_string()),
+        ]));
+
+        let tokens = tokenize("addi x1, x1, %lo(label)").unwrap();
+        let mut parser = Parser::new(tokens);
+        let nodes = parser.parse().unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].kind, StatementKind::Instruction("addi".to_string(), vec![
+            Operand::Register(1),
+            Operand::Register(1),
+            Operand::Modifier(ModifierKind::Lo, "label".to_string()),
+        ]));
+    }
 }
