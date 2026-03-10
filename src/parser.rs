@@ -19,6 +19,7 @@ impl fmt::Display for ParseError {
 pub enum MemoryOffset {
     Immediate(i32),
     Label(String),
+    Modifier(ModifierKind, String),
 }
 
 impl fmt::Display for MemoryOffset {
@@ -26,6 +27,13 @@ impl fmt::Display for MemoryOffset {
         match self {
             MemoryOffset::Immediate(n) => write!(f, "{}", n),
             MemoryOffset::Label(s) => write!(f, "{}", s),
+            MemoryOffset::Modifier(kind, symbol) => {
+                let kind_str = match kind {
+                    ModifierKind::Hi => "hi",
+                    ModifierKind::Lo => "lo",
+                };
+                write!(f, "%{}({})", kind_str, symbol)
+            }
         }
     }
 }
@@ -294,9 +302,28 @@ impl Parser {
 
             Token::Modifier(kind, symbol) => {
                 self.advance();
-                // TODO: Handle memory addressing with modifiers (e.g., %lo(label)(a1))
-                // This would involve checking for Token::LParenthesis here.
-                Ok(Operand::Modifier(kind, symbol))
+
+                // Check if this is a memory operand with modifier offset
+                if self.check(&Token::LParenthesis) {
+                    self.advance(); // consume left parenthesis
+
+                    // consume the register inside the parentheses
+                    let reg_token = self.consume(
+                        &Token::Register(0),
+                        "A register was expected inside parentheses for memory addressing"
+                    )?;
+
+                    let reg = match reg_token {
+                        Token::Register(r) => r,
+                        _ => unreachable!(),
+                    };
+
+                    self.consume(&Token::RParenthesis, "Right parenthesis expected after base register")?;
+
+                    Ok(Operand::Memory { offset: MemoryOffset::Modifier(kind, symbol), reg })
+                } else {
+                    Ok(Operand::Modifier(kind, symbol))
+                }
             }
 
             _ => Err(ParseError {
@@ -442,6 +469,18 @@ mod tests {
             Operand::Register(1),
             Operand::Register(1),
             Operand::Modifier(ModifierKind::Lo, "label".to_string()),
+        ]));
+
+        let tokens = tokenize("lw x1, %lo(label)(x2)").unwrap();
+        let mut parser = Parser::new(tokens);
+        let nodes = parser.parse().unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].kind, StatementKind::Instruction("lw".to_string(), vec![
+            Operand::Register(1),
+            Operand::Memory {
+                offset: MemoryOffset::Modifier(ModifierKind::Lo, "label".to_string()),
+                reg: 2
+            },
         ]));
     }
 }

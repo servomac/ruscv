@@ -746,4 +746,24 @@ mod tests {
         let res = tokenize("%hi(123)");
         assert_eq!(res.unwrap_err(), LexError::new(1, 5, LexErrorKind::UnexpectedChar('1')));
     }
+
+    #[test]
+    fn test_modifier_with_whitespace() {
+        let res = tokenize("%hi ( label ) ");
+        let tokens = res.expect("Should tokenize successfully");
+        assert_eq!(tokens[0].token, Token::Modifier(ModifierKind::Hi, "label".to_string()));
+    }
+
+    #[test]
+    fn test_modifier_as_memory_offset_operand() {
+        let res = tokenize("lw x1, %hi(label)(x2)");
+        let tokens = res.expect("Should tokenize successfully");
+        assert_eq!(tokens[0].token, Token::Instruction("lw".to_string()));
+        assert_eq!(tokens[1].token, Token::Register(1));
+        assert_eq!(tokens[2].token, Token::Comma);
+        assert_eq!(tokens[3].token, Token::Modifier(ModifierKind::Hi, "label".to_string()));
+        assert_eq!(tokens[4].token, Token::LParenthesis);
+        assert_eq!(tokens[5].token, Token::Register(2));
+        assert_eq!(tokens[6].token, Token::RParenthesis);
+    }
 }

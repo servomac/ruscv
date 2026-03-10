@@ -288,6 +288,7 @@ fn resolve_memory_offset(offset: &MemoryOffset, sym_table: &SymbolTable) -> Resu
         MemoryOffset::Label(name) => sym_table.get_address(name)
             .map(|addr| addr as i32)
             .ok_or_else(|| format!("Unknown label '{}'", name)),
+        MemoryOffset::Modifier(kind, name) => resolve_modifier(kind, name, sym_table),
     }
 }
 
@@ -762,6 +763,16 @@ mod tests {
                 ]),
                 line: 2,
             },
+            Statement {
+                kind: StatementKind::Instruction("lw".to_string(), vec![
+                    Operand::Register(2),
+                    Operand::Memory {
+                        offset: MemoryOffset::Modifier(ModifierKind::Lo, "my_label".to_string()),
+                        reg: 1,
+                    },
+                ]),
+                line: 3,
+            },
         ];
 
         assembler.assemble(&statements, &sym_table).expect("Assembly should succeed");
@@ -773,6 +784,11 @@ mod tests {
         // ADDI x1, x1, %lo(0x12800) -> %lo = 0x12800 & 0xFFF = 0x800 (signed -2048)
         // Result: 0x80008093
         assert_eq!(u32::from_le_bytes(assembler.text_bin[4..8].try_into().unwrap()), 0x80008093);
+
+        // LW x2, %lo(0x12800)(x1) -> %lo = 0x800
+        // I-type: imm[11:0]=0x800, rs1=1, funct3=010, rd=2, opcode=0000011
+        // 0x80000000 | 0x8000 | 0x2000 | 0x100 | 0x03
+        assert_eq!(u32::from_le_bytes(assembler.text_bin[8..12].try_into().unwrap()), 0x8000A103);
     }
 
     #[test]
