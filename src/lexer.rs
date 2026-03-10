@@ -147,7 +147,6 @@ pub fn tokenize(source: &str) -> Result<Vec<SpannedToken>, LexError> {
             }
             '"' => {
                 let start_column = column;
-                column += 1;
                 let token = read_string_literal(&mut chars, line, &mut column, start_column)?;
                 tokens.push(token);
             }
@@ -238,6 +237,20 @@ fn read_directive(
     })
 }
 
+fn skip_whitespace(
+    chars: &mut std::iter::Peekable<std::str::Chars>,
+    column: &mut usize,
+) {
+    while let Some(&c) = chars.peek() {
+        if c.is_whitespace() {
+            chars.next();
+            *column += 1;
+        } else {
+            break;
+        }
+    }
+}
+
 fn read_modifier(
     chars: &mut std::iter::Peekable<std::str::Chars>,
     line: usize,
@@ -252,13 +265,22 @@ fn read_modifier(
         "lo" => ModifierKind::Lo,
         other => return Err(LexError::new(line, start_column, LexErrorKind::UnknownModifier(other.to_string()))),
     };
+
+    skip_whitespace(chars, column);
     expect_char(chars, line, column, '(')?;
+    skip_whitespace(chars, column);
+
     let first = chars.next().ok_or(LexError::new(line, *column, LexErrorKind::UnexpectedEof))?;
     if !first.is_alphabetic() && first != '_' {
         return Err(LexError::new(line, *column, LexErrorKind::UnexpectedChar(first)));
     }
+
     let symbol = consume_identifier(chars, column, first);
+
+    skip_whitespace(chars, column);
     expect_char(chars, line, column, ')')?;
+    skip_whitespace(chars, column);
+
     Ok(SpannedToken {
         token: Token::Modifier(kind, symbol),
         line,
@@ -274,6 +296,7 @@ fn read_string_literal(
 ) -> Result<SpannedToken, LexError> {
     let mut string_literal = String::new();
     let mut unterminated = true;
+    *column += 1;
     while let Some(next_char) = chars.next() {
         *column += 1;
         if next_char == '"' {
@@ -330,8 +353,8 @@ fn read_number(
     }
     *column += 1;
 
-    let mut prefix_char = None;
     // check for prefix
+    let mut prefix_char = None;
     if (is_negative && chars.peek() == Some(&'0')) || (!is_negative && first_char == '0') {
         if is_negative {
             chars.next(); // consume '0'
@@ -694,7 +717,7 @@ mod tests {
     #[test]
     fn test_modifier_expected_paren() {
         let res = tokenize("%hi label");
-        assert_eq!(res.unwrap_err(), LexError::new(1, 4, LexErrorKind::Expected('(')));
+        assert_eq!(res.unwrap_err(), LexError::new(1, 5, LexErrorKind::Expected('(')));
     }
 
     #[test]
