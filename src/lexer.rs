@@ -142,51 +142,23 @@ pub fn tokenize(source: &str) -> Result<Vec<SpannedToken>, LexError> {
             }
             '.' => {
                 let start_column = column;
-                let directive = consume_identifier(&mut chars, &mut column, char);
-                if directive.len() == 1 {
-                    return Err(LexError::new(line, start_column, LexErrorKind::EmptyDirective));
-                }
-                tokens.push(SpannedToken {
-                    token: Token::Directive(directive.to_lowercase()),
-                    line,
-                    column: start_column,
-                });
+                let token = read_directive(&mut chars, line, &mut column, start_column)?;
+                tokens.push(token);
             }
             '"' => {
                 let start_column = column;
                 column += 1;
-                let token = read_string_literal(&mut chars, line, start_column, &mut column)?;
+                let token = read_string_literal(&mut chars, line, &mut column, start_column)?;
                 tokens.push(token);
             }
             '%' => {
-                // TODO it would be nice to be able to apply the modifiers to expressions, not just simple labels (i.e %hi(label + 4))
                 let start_column = column;
-                let first = chars.next().ok_or(LexError::new(line, column, LexErrorKind::UnexpectedEof))?;
-                column += 1;
-                let kind_str = consume_identifier(&mut chars, &mut column, first);
-                let kind = match kind_str.as_str() {
-                    "hi" => ModifierKind::Hi,
-                    "lo" => ModifierKind::Lo,
-                    other => return Err(LexError::new(line, start_column,
-                                LexErrorKind::UnknownModifier(other.to_string()))),
-                };
-                // TODO: skip whitespace between modifier and parenthesis
-                expect_char(&mut chars, &mut column, line, '(')?;
-                let first = chars.next().ok_or(LexError::new(line, column, LexErrorKind::UnexpectedEof))?;
-                if !first.is_alphabetic() && first != '_' {
-                    return Err(LexError::new(line, column, LexErrorKind::UnexpectedChar(first)));
-                }
-                let symbol = consume_identifier(&mut chars, &mut column, first);
-                expect_char(&mut chars, &mut column, line, ')')?;
-                tokens.push(SpannedToken {
-                    token: Token::Modifier(kind, symbol),
-                    line,
-                    column: start_column,
-                });
+                let token = read_modifier(&mut chars, line, &mut column, start_column)?;
+                tokens.push(token);
             }
             '0'..='9' | '-' => {
-                // TODO is coherent to increase the column before calling read_string_literal, but not here?
-                let token = read_number(char, &mut chars, line, &mut column)?;
+                let start_column = column;
+                let token = read_number(&mut chars, line, &mut column, start_column, char)?;
                 tokens.push(token);
             }
             'A'..='Z' | 'a'..='z' | '_' => {
@@ -215,8 +187,8 @@ pub fn tokenize(source: &str) -> Result<Vec<SpannedToken>, LexError> {
 
 fn expect_char(
     chars: &mut std::iter::Peekable<std::str::Chars>,
-    column: &mut usize,
     line: usize,
+    column: &mut usize,
     expected: char,
 ) -> Result<(), LexError> {
     match chars.next() {
@@ -249,7 +221,57 @@ fn consume_identifier(
     identifier
 }
 
-fn read_string_literal(chars: &mut std::iter::Peekable<std::str::Chars>, line: usize, start_column: usize, column: &mut usize) -> Result<SpannedToken, LexError> {
+fn read_directive(
+    chars: &mut std::iter::Peekable<std::str::Chars>,
+    line: usize,
+    column: &mut usize,
+    start_column: usize,
+) -> Result<SpannedToken, LexError> {
+    let directive = consume_identifier(chars, column, '.');
+    if directive.len() == 1 {
+        return Err(LexError::new(line, start_column, LexErrorKind::EmptyDirective));
+    }
+    Ok(SpannedToken {
+        token: Token::Directive(directive.to_lowercase()),
+        line,
+        column: start_column,
+    })
+}
+
+fn read_modifier(
+    chars: &mut std::iter::Peekable<std::str::Chars>,
+    line: usize,
+    column: &mut usize,
+    start_column: usize,
+) -> Result<SpannedToken, LexError> {
+    let first = chars.next().ok_or(LexError::new(line, *column, LexErrorKind::UnexpectedEof))?;
+    *column += 1;
+    let kind_str = consume_identifier(chars, column, first);
+    let kind = match kind_str.as_str() {
+        "hi" => ModifierKind::Hi,
+        "lo" => ModifierKind::Lo,
+        other => return Err(LexError::new(line, start_column, LexErrorKind::UnknownModifier(other.to_string()))),
+    };
+    expect_char(chars, line, column, '(')?;
+    let first = chars.next().ok_or(LexError::new(line, *column, LexErrorKind::UnexpectedEof))?;
+    if !first.is_alphabetic() && first != '_' {
+        return Err(LexError::new(line, *column, LexErrorKind::UnexpectedChar(first)));
+    }
+    let symbol = consume_identifier(chars, column, first);
+    expect_char(chars, line, column, ')')?;
+    Ok(SpannedToken {
+        token: Token::Modifier(kind, symbol),
+        line,
+        column: start_column,
+    })
+}
+
+fn read_string_literal(
+    chars: &mut std::iter::Peekable<std::str::Chars>,
+    line: usize,
+    column: &mut usize,
+    start_column: usize,
+) -> Result<SpannedToken, LexError> {
     let mut string_literal = String::new();
     let mut unterminated = true;
     while let Some(next_char) = chars.next() {
@@ -285,8 +307,13 @@ fn read_string_literal(chars: &mut std::iter::Peekable<std::str::Chars>, line: u
     })
 }
 
-fn read_number(first_char: char, chars: &mut std::iter::Peekable<std::str::Chars>, line: usize, column: &mut usize) -> Result<SpannedToken, LexError> {
-    let start_column = *column;
+fn read_number(
+    chars: &mut std::iter::Peekable<std::str::Chars>,
+    line: usize,
+    column: &mut usize,
+    start_column: usize,
+    first_char: char,
+) -> Result<SpannedToken, LexError> {
     let is_negative = first_char == '-';
     let mut radix = 10;
     let mut number_str = String::new();
@@ -388,21 +415,20 @@ fn classify_identifier(ident: &str, line: usize, column: usize) -> Result<Token,
     }
 
     // Instructions
-    let is_instruction = match lower_ident.as_str() {
-        "add" | "sub" | "and" | "or" | "xor" | "sll" | "srl" | "sra" | "slt" | "sltu" |
-        "addi" | "andi" | "ori" | "xori" | "slli" | "srli" | "srai" | "slti" | "sltiu" |
-        "lw" | "sw" | "lb" | "lh" | "lbu" | "lhu" | "sb" | "sh" |
-        "beq" | "bne" | "blt" | "bge" | "bltu" | "bgeu" |
-        "jal" | "jalr" | "lui" | "auipc" | "ecall" | "ebreak" => true,
-        _ => false,
-    };
-
-    if is_instruction {
+    if is_instruction(&lower_ident) {
         Ok(Token::Instruction(lower_ident))
     } else {
         // Labels are case-sensitive usually, we preserve original case
         Ok(Token::Label(ident.to_string()))
     }
+}
+
+fn is_instruction(ident: &str) -> bool {
+    matches!(ident, "add" | "sub" | "and" | "or" | "xor" | "sll" | "srl" | "sra" | "slt" | "sltu" |
+        "addi" | "andi" | "ori" | "xori" | "slli" | "srli" | "srai" | "slti" | "sltiu" |
+        "lw" | "sw" | "lb" | "lh" | "lbu" | "lhu" | "sb" | "sh" |
+        "beq" | "bne" | "blt" | "bge" | "bltu" | "bgeu" |
+        "jal" | "jalr" | "lui" | "auipc" | "ecall" | "ebreak")
 }
 
 fn abi_to_register(ident: &str) -> Option<u8> {
