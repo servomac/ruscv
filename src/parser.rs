@@ -19,7 +19,6 @@ impl fmt::Display for ParseError {
 pub enum MemoryOffset {
     Immediate(i32),
     Label(String),
-    Modifier(ModifierKind, String),
 }
 
 impl fmt::Display for MemoryOffset {
@@ -27,13 +26,6 @@ impl fmt::Display for MemoryOffset {
         match self {
             MemoryOffset::Immediate(n) => write!(f, "{}", n),
             MemoryOffset::Label(s) => write!(f, "{}", s),
-            MemoryOffset::Modifier(kind, symbol) => {
-                let kind_str = match kind {
-                    ModifierKind::Hi => "hi",
-                    ModifierKind::Lo => "lo",
-                };
-                write!(f, "%{}({})", kind_str, symbol)
-            }
         }
     }
 }

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::parser::{Statement, StatementKind, Operand, MemoryOffset};
+use crate::lexer::ModifierKind;
 use crate::symbols::SymbolTable;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -287,10 +288,6 @@ fn resolve_memory_offset(offset: &MemoryOffset, sym_table: &SymbolTable) -> Resu
         MemoryOffset::Label(name) => sym_table.get_address(name)
             .map(|addr| addr as i32)
             .ok_or_else(|| format!("Unknown label '{}'", name)),
-        MemoryOffset::Modifier(_, _) => {
-            // TODO: Implement relocation support for modifiers in the assembler
-            Err("Modifiers are not yet supported in the assembler".to_string())
-        }
     }
 }
 
@@ -299,15 +296,34 @@ fn resolve_any_immediate(op: &Operand, sym_table: &SymbolTable) -> Result<i32, S
         // For example in addi x1, x2, 10
         Operand::Immediate(val) => Ok(*val),
 
-        // For example in addi x1, x2, etiqueta
+        // For example in addi x1, x2, symbol
         Operand::Label(name) => sym_table.get_address(name)
             .map(|addr| addr as i32)
             .ok_or_else(|| format!("Unknown label '{}'", name)),
 
-        // For example in lw x1, 4(x2) o lw x1, etiqueta(x2)
+        // For example in lw x1, 4(x2) o lw x1, symbol(x2)
         Operand::Memory { offset, .. } => resolve_memory_offset(offset, sym_table),
 
+        // For example in addi x1, x2, %hi(symbol)
+        Operand::Modifier(kind, name) => resolve_modifier(kind, name, sym_table),
+
         _ => Err("This operand do not contain a numeric value or a label".to_string()),
+    }
+}
+
+fn resolve_modifier(kind: &ModifierKind, name: &str, sym_table: &SymbolTable) -> Result<i32, String> {
+    let addr = sym_table.get_address(name)
+        .ok_or_else(|| format!("Unknown label '{}'", name))?;
+
+    match kind {
+        ModifierKind::Hi => {
+            // %hi(addr) = (addr + 0x800) >> 12
+            // 0x800 is the offset to make the address positive and sign-extend it to 32 bits
+            Ok(((addr + 0x800) >> 12) as i32)
+        }
+        ModifierKind::Lo => {
+            Ok(((addr << 20) as i32) >> 20)
+        }
     }
 }
 
@@ -350,12 +366,7 @@ fn encode_u_type(
     sym_table: &SymbolTable,
 ) -> Result<u32, String> {
     if let [Operand::Register(rd), imm_op] = ops {
-        let val = match imm_op {
-            Operand::Immediate(imm) => *imm,
-            Operand::Label(name) => sym_table.get_address(name)
-                .ok_or(format!("Unknown label '{}'", name))? as i32,
-            _ => return Err("Invalid operand: expected immediate or label".to_string()),
-        };
+        let val = resolve_any_immediate(imm_op, sym_table)?;
         // TODO review this because i'm not completely sure how the U-immediate is represented in the instruction encoding
         let imm_u32 = val as u32;
         Ok((imm_u32 << 12) | ((*rd as u32) << 7) | (opcode as u32))
@@ -371,12 +382,7 @@ fn encode_j_type(
     current_pc: u32
 ) -> Result<u32, String> {
     if let [Operand::Register(rd), imm_op] = ops {
-        let val = match imm_op {
-            Operand::Immediate(imm) => *imm,
-            Operand::Label(name) => sym_table.get_address(name)
-                .ok_or(format!("Unknown label '{}'", name))? as i32,
-            _ => return Err("Invalid operand: expected immediate or label".to_string()),
-        };
+        let val = resolve_any_immediate(imm_op, sym_table)?;
         let offset = (val as i32) - (current_pc as i32);
 
         if offset < -1048576 || offset > 1048574 {
@@ -730,6 +736,43 @@ mod tests {
 
         // Verify that the valid instruction was assembled
         assert_eq!(assembler.text_bin.len(), 4);
+    }
+
+    #[test]
+    fn test_modifier_assembly() {
+        let mut assembler = Assembler::new(0, 0);
+        let mut sym_table = SymbolTable::new(0, 0);
+
+        // my_label at 0x12800 (bit 11 is 1)
+        sym_table.add_label("my_label".to_string(), 0x12800).unwrap();
+
+        let statements = vec![
+            Statement {
+                kind: StatementKind::Instruction("lui".to_string(), vec![
+                    Operand::Register(1),
+                    Operand::Modifier(ModifierKind::Hi, "my_label".to_string()),
+                ]),
+                line: 1,
+            },
+            Statement {
+                kind: StatementKind::Instruction("addi".to_string(), vec![
+                    Operand::Register(1),
+                    Operand::Register(1),
+                    Operand::Modifier(ModifierKind::Lo, "my_label".to_string()),
+                ]),
+                line: 2,
+            },
+        ];
+
+        assembler.assemble(&statements, &sym_table).expect("Assembly should succeed");
+
+        // LUI x1, %hi(0x12800) -> %hi = (0x12800 + 0x800) >> 12 = 0x13
+        // Result: 0x000130B7
+        assert_eq!(u32::from_le_bytes(assembler.text_bin[0..4].try_into().unwrap()), 0x000130B7);
+
+        // ADDI x1, x1, %lo(0x12800) -> %lo = 0x12800 & 0xFFF = 0x800 (signed -2048)
+        // Result: 0x80008093
+        assert_eq!(u32::from_le_bytes(assembler.text_bin[4..8].try_into().unwrap()), 0x80008093);
     }
 
     #[test]
