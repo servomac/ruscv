@@ -129,17 +129,7 @@ pub fn tokenize(source: &str) -> Result<Vec<SpannedToken>, LexError> {
             }
             '.' => {
                 let start_column = column;
-                column += 1;
-                let mut directive = char.to_string();
-                while let Some(&next_char) = chars.peek() {
-                    if next_char.is_alphanumeric() || next_char == '_' {
-                        directive.push(next_char);
-                        chars.next();
-                        column += 1;
-                    } else {
-                        break;
-                    }
-                }
+                let directive = consume_identifier(&mut chars, &mut column, char);
                 if directive.len() == 1 {
                     return Err(LexError::new(line, start_column, LexErrorKind::EmptyDirective));
                 }
@@ -156,22 +146,13 @@ pub fn tokenize(source: &str) -> Result<Vec<SpannedToken>, LexError> {
                 tokens.push(token);
             }
             '0'..='9' | '-' => {
+                // TODO is coherent to increase the column before calling read_string_literal, but not here?
                 let token = read_number(char, &mut chars, line, &mut column)?;
                 tokens.push(token);
             }
             'A'..='Z' | 'a'..='z' | '_' => {
                 let start_column = column;
-                column += 1;
-                let mut identifier = char.to_string();
-                while let Some(&next_char) = chars.peek() {
-                    if next_char.is_alphanumeric() || next_char == '_' {
-                        identifier.push(next_char);
-                        chars.next();
-                        column += 1;
-                    } else {
-                        break;
-                    }
-                }
+                let identifier = consume_identifier(&mut chars, &mut column, char);
                 tokens.push(SpannedToken {
                     token: classify_identifier(&identifier, line, start_column)?,
                     line,
@@ -191,6 +172,26 @@ pub fn tokenize(source: &str) -> Result<Vec<SpannedToken>, LexError> {
     });
 
     Ok(tokens)
+}
+
+fn consume_identifier(
+    chars: &mut std::iter::Peekable<std::str::Chars>,
+    column: &mut usize,
+    first_char: char,
+) -> String {
+    let mut identifier = String::new();
+    identifier.push(first_char);
+    *column += 1;
+    while let Some(&next_char) = chars.peek() {
+        if next_char.is_alphanumeric() || next_char == '_' {
+            identifier.push(next_char);
+            chars.next();
+            *column += 1;
+        } else {
+            break;
+        }
+    }
+    identifier
 }
 
 fn read_string_literal(chars: &mut std::iter::Peekable<std::str::Chars>, line: usize, start_column: usize, column: &mut usize) -> Result<SpannedToken, LexError> {

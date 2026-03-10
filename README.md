@@ -25,7 +25,7 @@ A RISC-V Assembler and Emulator implementation in Rust.
 - **Pseudoinstructions**
 - **Memory System and Faults**: Implement proper memory system and fault handling for out-of-bounds, unaligned, and non-executable access.
 - **Privileged ISA Specification**
-- **System Instructions**: Implement `ECALL` and `EBREAK` for system calls and breakpoints.
+- **System Instructions**: Implement `ECALL` for system calls.
 - **ELF Support**: Load and execute RISC-V ELF binaries (initially ELF32), including parsing headers, mapping loadable segments, and setting the simulator PC to the ELF entry point.
 
 ## Project Structure
