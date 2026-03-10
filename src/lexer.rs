@@ -2,6 +2,9 @@ use std::fmt;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum LexErrorKind {
+    Expected(char),
+    UnexpectedEof,
+    UnknownModifier(String),
     UnexpectedChar(char),
     UnterminatedString,
     UnknownEscapeSequence(char),
@@ -28,6 +31,9 @@ impl LexError {
 impl fmt::Display for LexError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.kind {
+            LexErrorKind::Expected(c) => write!(f, "Expected '{}'", c),
+            LexErrorKind::UnexpectedEof => write!(f, "Unexpected end of file"),
+            LexErrorKind::UnknownModifier(s) => write!(f, "Unknown modifier: '{}'", s),
             LexErrorKind::UnexpectedChar(c) => write!(f, "Unexpected character '{}'", c),
             LexErrorKind::UnterminatedString => write!(f, "Unterminated string literal"),
             LexErrorKind::UnknownEscapeSequence(c) => write!(f, "Unknown escape sequence '\\{}'", c),
@@ -48,12 +54,19 @@ pub struct SpannedToken {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub enum ModifierKind {
+    Hi,
+    Lo,
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum Token {
     Instruction(String),
     Register(u8),
     Immediate(i32),
     StringLiteral(String),
     Label(String),
+    Modifier(ModifierKind, String),
     Colon,
     Directive(String),
     Comma,
@@ -145,6 +158,32 @@ pub fn tokenize(source: &str) -> Result<Vec<SpannedToken>, LexError> {
                 let token = read_string_literal(&mut chars, line, start_column, &mut column)?;
                 tokens.push(token);
             }
+            '%' => {
+                // TODO it would be nice to be able to apply the modifiers to expressions, not just simple labels (i.e %hi(label + 4))
+                let start_column = column;
+                let first = chars.next().ok_or(LexError::new(line, column, LexErrorKind::UnexpectedEof))?;
+                column += 1;
+                let kind_str = consume_identifier(&mut chars, &mut column, first);
+                let kind = match kind_str.as_str() {
+                    "hi" => ModifierKind::Hi,
+                    "lo" => ModifierKind::Lo,
+                    other => return Err(LexError::new(line, start_column,
+                                LexErrorKind::UnknownModifier(other.to_string()))),
+                };
+                // TODO: skip whitespace between modifier and parenthesis
+                expect_char(&mut chars, &mut column, line, '(')?;
+                let first = chars.next().ok_or(LexError::new(line, column, LexErrorKind::UnexpectedEof))?;
+                if !first.is_alphabetic() && first != '_' {
+                    return Err(LexError::new(line, column, LexErrorKind::UnexpectedChar(first)));
+                }
+                let symbol = consume_identifier(&mut chars, &mut column, first);
+                expect_char(&mut chars, &mut column, line, ')')?;
+                tokens.push(SpannedToken {
+                    token: Token::Modifier(kind, symbol),
+                    line,
+                    column: start_column,
+                });
+            }
             '0'..='9' | '-' => {
                 // TODO is coherent to increase the column before calling read_string_literal, but not here?
                 let token = read_number(char, &mut chars, line, &mut column)?;
@@ -172,6 +211,22 @@ pub fn tokenize(source: &str) -> Result<Vec<SpannedToken>, LexError> {
     });
 
     Ok(tokens)
+}
+
+fn expect_char(
+    chars: &mut std::iter::Peekable<std::str::Chars>,
+    column: &mut usize,
+    line: usize,
+    expected: char,
+) -> Result<(), LexError> {
+    match chars.next() {
+        Some(c) if c == expected => {
+            *column += 1;
+            Ok(())
+        }
+        Some(_) => Err(LexError::new(line, *column, LexErrorKind::Expected(expected))),
+        None => Err(LexError::new(line, *column, LexErrorKind::UnexpectedEof)),
+    }
 }
 
 fn consume_identifier(
@@ -568,5 +623,34 @@ mod tests {
         let res = tokenize("0xDEADBEEF");
         let tokens = res.expect("Should tokenize successfully");
         assert_eq!(tokens[0].token, Token::Immediate(-559038737)); // cast to i32
+    }
+
+    #[test]
+    fn test_hi_lo_modifier() {
+        let res = tokenize("%hi(label)");
+        let tokens = res.expect("Should tokenize successfully");
+        assert_eq!(tokens[0].token, Token::Modifier(ModifierKind::Hi, "label".to_string()));
+
+        let res = tokenize("%lo(label)");
+        let tokens = res.expect("Should tokenize successfully");
+        assert_eq!(tokens[0].token, Token::Modifier(ModifierKind::Lo, "label".to_string()));
+    }
+
+    #[test]
+    fn test_modifier_expected_paren() {
+        let res = tokenize("%hi label");
+        assert_eq!(res.unwrap_err(), LexError::new(1, 4, LexErrorKind::Expected('(')));
+    }
+
+    #[test]
+    fn test_unknown_modifier() {
+        let res = tokenize("%foo(label)");
+        assert_eq!(res.unwrap_err(), LexError::new(1, 1, LexErrorKind::UnknownModifier("foo".to_string())));
+    }
+
+    #[test]
+    fn test_modifier_invalid_symbol() {
+        let res = tokenize("%hi(123)");
+        assert_eq!(res.unwrap_err(), LexError::new(1, 5, LexErrorKind::UnexpectedChar('1')));
     }
 }
