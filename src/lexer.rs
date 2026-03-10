@@ -330,6 +330,7 @@ fn read_number(
     }
     *column += 1;
 
+    let mut prefix_char = None;
     // check for prefix
     if (is_negative && chars.peek() == Some(&'0')) || (!is_negative && first_char == '0') {
         if is_negative {
@@ -339,9 +340,9 @@ fn read_number(
 
         if let Some(&prefix) = chars.peek() {
             match prefix {
-                'x' | 'X' => { radix = 16; chars.next(); *column += 1; }
-                'b' | 'B' => { radix = 2;  chars.next(); *column += 1; }
-                'o' | 'O' => { radix = 8;  chars.next(); *column += 1; }
+                'x' | 'X' => { radix = 16; prefix_char = Some(prefix); chars.next(); *column += 1; }
+                'b' | 'B' => { radix = 2;  prefix_char = Some(prefix); chars.next(); *column += 1; }
+                'o' | 'O' => { radix = 8;  prefix_char = Some(prefix); chars.next(); *column += 1; }
                 _ => {
                     if !is_negative {
                         // already pushed '0'
@@ -373,6 +374,34 @@ fn read_number(
             *column += 1;
         } else {
             break;
+        }
+    }
+
+    // Check for trailing invalid characters
+    if let Some(&next) = chars.peek() {
+        if next.is_alphanumeric() || next == '_' {
+            while let Some(&next) = chars.peek() {
+                if next.is_alphanumeric() || next == '_' {
+                    number_str.push(next);
+                    chars.next();
+                    *column += 1;
+                } else {
+                    break;
+                }
+            }
+            let mut full_str = String::new();
+            if is_negative {
+                full_str.push('-');
+            }
+            if let Some(p) = prefix_char {
+                full_str.push('0');
+                full_str.push(p);
+                let digits = if !is_negative { &number_str[1..] } else { &number_str };
+                full_str.push_str(digits);
+            } else {
+                full_str.push_str(&number_str);
+            }
+            return Err(LexError::new(line, start_column, LexErrorKind::InvalidNumber(full_str)));
         }
     }
 
@@ -672,6 +701,21 @@ mod tests {
     fn test_unknown_modifier() {
         let res = tokenize("%foo(label)");
         assert_eq!(res.unwrap_err(), LexError::new(1, 1, LexErrorKind::UnknownModifier("foo".to_string())));
+    }
+
+    #[test]
+    fn test_invalid_number() {
+        // Decimal with letters
+        let res = tokenize("123xyz");
+        assert_eq!(res.unwrap_err(), LexError::new(1, 1, LexErrorKind::InvalidNumber("123xyz".to_string())));
+
+        // Binary with invalid digits
+        let res = tokenize("0b10102");
+        assert_eq!(res.unwrap_err(), LexError::new(1, 1, LexErrorKind::InvalidNumber("0b10102".to_string())));
+
+        // Hex with invalid letters
+        let res = tokenize("0xDEADG");
+        assert_eq!(res.unwrap_err(), LexError::new(1, 1, LexErrorKind::InvalidNumber("0xDEADG".to_string())));
     }
 
     #[test]
