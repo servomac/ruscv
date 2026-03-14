@@ -119,6 +119,53 @@ fn expand_statement(statement: Statement) -> Result<Vec<Statement>, String> {
                 Ok(vec![Statement { kind: StatementKind::Instruction(name, ops), line }])
             }
         }
+        "nop" => {
+            if ops.len() == 0 {
+                Ok(vec![Statement {
+                    kind: StatementKind::Instruction("addi".to_string(), vec![Operand::Register(0), Operand::Register(0), Operand::Immediate(0)]),
+                    line,
+                }])
+            } else {
+                Err(format!("Invalid number of operands for 'nop' pseudo-instruction. Expected 0, got {}", ops.len()))
+            }
+        }
+        "li" => {
+            if ops.len() == 2 {
+                let rd = &ops[0];
+                let imm_op = &ops[1];
+                let rd_reg = match rd {
+                    Operand::Register(n) => *n,
+                    _ => return Err(format!("Invalid first operand for 'li' pseudo-instruction. Expected a register, got {}", rd)),
+                };
+                let imm = match imm_op {
+                    Operand::Immediate(n) => *n,
+                    _ => return Err(format!("Invalid second operand for 'li' pseudo-instruction. Expected an immediate, got {}", imm_op)),
+                };
+
+                if (-2048..=2047).contains(&imm) {
+                    Ok(vec![Statement {
+                        kind: StatementKind::Instruction("addi".to_string(), vec![Operand::Register(rd_reg), Operand::Register(0), Operand::Immediate(imm)]),
+                        line,
+                    }])
+                } else {
+                    let hi20 = (imm + 0x800) >> 12;
+                    let lo12 = (imm << 20) >> 20;
+                    Ok(vec![
+                        Statement {
+                            kind: StatementKind::Instruction("lui".to_string(), vec![Operand::Register(rd_reg), Operand::Immediate(hi20)]),
+                            line,
+                        },
+                        Statement {
+                            kind: StatementKind::Instruction("addi".to_string(), vec![Operand::Register(rd_reg), Operand::Register(rd_reg), Operand::Immediate(lo12)]),
+                            line,
+                        }
+                    ])
+                }
+
+            } else {
+                Err(format!("Invalid number of operands for 'li' pseudo-instruction. Expected 2, got {}", ops.len()))
+            }
+        }
         "j" => {
             if ops.len() == 1 {
                 let offset = ops.into_iter().next().unwrap();
@@ -433,5 +480,65 @@ mod tests {
             "jalr".to_string(),
             vec![Operand::Register(0), Operand::Register(6), Operand::Modifier(ModifierKind::Lo, "loop".to_string())]
         ));
+    }
+
+    #[test]
+    fn test_expand_li_small() {
+        let statement = Statement {
+            kind: StatementKind::Instruction("li".to_string(), vec![Operand::Register(1), Operand::Immediate(100)]),
+            line: 1,
+        };
+        let expanded = expand_statement(statement).unwrap();
+        assert_eq!(expanded.len(), 1);
+        assert_eq!(expanded[0].kind, StatementKind::Instruction("addi".to_string(), vec![
+            Operand::Register(1), Operand::Register(0), Operand::Immediate(100)]));
+    }
+
+    #[test]
+    fn test_expand_li_large() {
+        let statement = Statement {
+            kind: StatementKind::Instruction("li".to_string(), vec![Operand::Register(1), Operand::Immediate(0x12345678)]),
+            line: 1,
+        };
+        let expanded = expand_statement(statement).unwrap();
+        assert_eq!(expanded.len(), 2);
+        // hi20 = (0x12345678 + 0x800) >> 12 = 0x12345
+        // lo12 = (0x12345678 << 20) >> 20 = 0x678
+        assert_eq!(expanded[0].kind, StatementKind::Instruction("lui".to_string(), vec![Operand::Register(1), Operand::Immediate(0x12345)]));
+        assert_eq!(expanded[1].kind, StatementKind::Instruction("addi".to_string(), vec![Operand::Register(1), Operand::Register(1), Operand::Immediate(0x678)]));
+    }
+
+    #[test]
+    fn test_expand_li_negative_small() {
+        let statement = Statement {
+            kind: StatementKind::Instruction("li".to_string(), vec![Operand::Register(1), Operand::Immediate(-100)]),
+            line: 1,
+        };
+        let expanded = expand_statement(statement).unwrap();
+        assert_eq!(expanded.len(), 1);
+        assert_eq!(expanded[0].kind, StatementKind::Instruction("addi".to_string(), vec![Operand::Register(1), Operand::Register(0), Operand::Immediate(-100)]));
+    }
+
+    #[test]
+    fn test_expand_li_large_bit11_set() {
+        // 0x12345ABC — lo = 0xABC, bit 11 is SET → +0x800 correction triggers
+        let statement = Statement {
+            kind: StatementKind::Instruction("li".to_string(),
+                vec![Operand::Register(1), Operand::Immediate(0x12345ABC_u32 as i32)]),
+            line: 1,
+        };
+        let expanded = expand_statement(statement).unwrap();
+        assert_eq!(expanded.len(), 2);
+        // hi = (0x12345ABC + 0x800) >> 12 = 0x12346  ← note: 0x12346, not 0x12345
+        // lo = sign_extend(0xABC) = -1348
+        assert_eq!(
+            expanded[0].kind,
+            StatementKind::Instruction("lui".to_string(), vec![Operand::Register(1), Operand::Immediate(0x12346)])
+        );
+        assert_eq!(
+            expanded[1].kind,
+            StatementKind::Instruction("addi".to_string(), vec![
+                Operand::Register(1), Operand::Register(1), Operand::Immediate(-1348)])
+        );
     }
 }
