@@ -15,7 +15,7 @@ impl fmt::Display for ParseError {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq)]
 pub enum MemoryOffset {
     Immediate(i32),
     Label(String),
@@ -38,7 +38,7 @@ impl fmt::Display for MemoryOffset {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq)]
 pub enum Operand {
     Register(u8),
     Immediate(i32),

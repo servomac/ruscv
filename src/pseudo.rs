@@ -295,7 +295,7 @@ fn expand_statement(statement: Statement) -> Result<Vec<Statement>, String> {
                 // Validate offset is an Immediate or Label
                 let (offset_high, offset_low) = match offset {
                     Operand::Immediate(imm) => (
-                        Operand::Immediate(((imm + 0x800) >> 12) as i32),
+                        Operand::Immediate(((imm as i64 + 0x800) >> 12) as i32),
                         Operand::Immediate((imm << 20) >> 20),
                     ),
                     Operand::Label(label) => (
@@ -329,7 +329,7 @@ fn expand_statement(statement: Statement) -> Result<Vec<Statement>, String> {
                 // Validate offset is an Immediate or Label
                 let (offset_high, offset_low) = match offset {
                     Operand::Immediate(imm) => (
-                        Operand::Immediate(((imm + 0x800) >> 12) as i32),
+                        Operand::Immediate(((imm as i64 + 0x800) >> 12) as i32),
                         Operand::Immediate((imm << 20) >> 20),
                     ),
                     Operand::Label(label) => (
@@ -392,9 +392,9 @@ where
     if ops.len() != 1 {
         return Err(format!("Invalid number of operands for '{}' pseudo-instruction. Expected 1, got {}", name, ops.len()));
     }
-    let rd = &ops[0];
+    let rd = ops.into_iter().next().unwrap();
     let rd_reg = match rd {
-        Operand::Register(n) => *n,
+        Operand::Register(n) => n,
         _ => return Err(format!("Invalid operand for '{}' pseudo-instruction. Expected a register, got {}", name, rd)),
     };
     Ok(vec![Statement {
@@ -410,14 +410,15 @@ where
     if ops.len() != 2 {
         return Err(format!("Invalid number of operands for '{}' pseudo-instruction. Expected 2, got {}", name, ops.len()));
     }
-    let rd = &ops[0];
-    let rs = &ops[1];
+    let mut ops_iter = ops.into_iter();
+    let rd = ops_iter.next().unwrap();
+    let rs = ops_iter.next().unwrap();
     let rd_reg = match rd {
-        Operand::Register(n) => *n,
+        Operand::Register(n) => n,
         _ => return Err(format!("Invalid first operand for '{}' pseudo-instruction. Expected a register, got {}", name, rd)),
     };
     let rs_reg = match rs {
-        Operand::Register(n) => *n,
+        Operand::Register(n) => n,
         _ => return Err(format!("Invalid second operand for '{}' pseudo-instruction. Expected a register, got {}", name, rs)),
     };
     Ok(vec![Statement {
@@ -441,6 +442,7 @@ where
         Operand::Register(n) => n,
         _ => return Err(format!("Invalid first operand for '{}' pseudo-instruction. Expected a register, got {}", name, rd)),
     };
+    // TODO should also allow immediate, not only label
     let symbol = match rs {
         Operand::Label(label) => label,
         _ => return Err(format!("Invalid second operand for '{}' pseudo-instruction. Expected a label, got {}", name, rs)),
@@ -706,6 +708,23 @@ mod tests {
             "jalr".to_string(),
             vec![Operand::Register(1), Operand::Register(1), Operand::Modifier(ModifierKind::Lo, "loop".to_string())]
         ));
+    }
+
+    #[test]
+    fn test_expand_call_immediate_bit11_set() {
+        // validates the +0x800 correction in call/tail immediate path
+        let statement = Statement {
+            kind: StatementKind::Instruction("call".to_string(),
+                vec![Operand::Immediate(0x12800)]),
+            line: 1,
+        };
+        let expanded = expand_statement(statement).unwrap();
+        // hi = (0x12800 + 0x800) >> 12 = 0x13
+        // lo = -2048
+        assert_eq!(expanded[0].kind, StatementKind::Instruction("auipc".to_string(),
+            vec![Operand::Register(1), Operand::Immediate(0x13)]));
+        assert_eq!(expanded[1].kind, StatementKind::Instruction("jalr".to_string(),
+            vec![Operand::Register(1), Operand::Register(1), Operand::Immediate(-2048)]));
     }
 
     #[test]
