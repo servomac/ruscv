@@ -19,105 +19,104 @@ fn expand_statement(statement: Statement) -> Result<Vec<Statement>, String> {
 
     match name.as_str() {
         "la" => {
-            if ops.len() == 2 {
-                let rd = &ops[0];
-                let symbol = &ops[1];
-                let rd_reg = match rd {
-                    Operand::Register(n) => *n,
-                    _ => return Err(format!("Invalid first operand for 'la' pseudo-instruction. Expected a register, got {}", rd)),
-                };
-                let symbol = match symbol {
-                    Operand::Label(label) => label.clone(),
-                    _ => return Err(format!("Invalid second operand for 'la' pseudo-instruction. Expected a label, got {}", symbol)),
-                };
-                Ok(vec![
-                    Statement {
-                        kind: StatementKind::Instruction("auipc".to_string(), vec![Operand::Register(rd_reg), Operand::Modifier(ModifierKind::Hi, symbol.clone())]),
-                        line,
-                    },
-                    Statement {
-                        kind: StatementKind::Instruction("addi".to_string(), vec![Operand::Register(rd_reg), Operand::Register(rd_reg), Operand::Modifier(ModifierKind::Lo, symbol.clone())]),
-                        line,
-                    }
-                ])
-            } else {
-                Err(format!("Invalid number of operands for 'la' pseudo-instruction. Expected 2, got {}", ops.len()))
+            if ops.len() != 2 {
+                return Err(format!("Invalid number of operands for 'la' pseudo-instruction. Expected 2, got {}", ops.len()));
             }
+
+            let rd = &ops[0];
+            let symbol = &ops[1];
+            let rd_reg = match rd {
+                Operand::Register(n) => *n,
+                _ => return Err(format!("Invalid first operand for 'la' pseudo-instruction. Expected a register, got {}", rd)),
+            };
+            let symbol = match symbol {
+                Operand::Label(label) => label.clone(),
+                _ => return Err(format!("Invalid second operand for 'la' pseudo-instruction. Expected a label, got {}", symbol)),
+            };
+            Ok(vec![
+                Statement {
+                    kind: StatementKind::Instruction("auipc".to_string(), vec![Operand::Register(rd_reg), Operand::Modifier(ModifierKind::Hi, symbol.clone())]),
+                    line,
+                },
+                Statement {
+                    kind: StatementKind::Instruction("addi".to_string(), vec![Operand::Register(rd_reg), Operand::Register(rd_reg), Operand::Modifier(ModifierKind::Lo, symbol.clone())]),
+                    line,
+                }
+            ])
         }
         "lb" | "lh" | "lw" => {
-            if ops.len() == 2 {
-                // auipc rd, symbol[31:12]
-                // l{b|h|w} rd, symbol[11:0](rd)
-                let rd = &ops[0];
-                let symbol = &ops[1];
-                // if second operand is a Label, we consider it a pseudo-instruction and expand it.
-                // Otherwise, we consider it a base instruction and return it as is.
-                let symbol = match symbol {
-                    Operand::Label(label) => label.clone(),
-                    _ => return Ok(vec![Statement { kind: StatementKind::Instruction(name, ops), line }])
-                };
-                let rd_reg = match rd {
-                    Operand::Register(n) => *n,
-                    _ => return Err(format!("Invalid first operand for '{}' pseudo-instruction. Expected a register, got {}", name, rd)),
-                };
-                Ok(vec![
-                    Statement {
-                        kind: StatementKind::Instruction("auipc".to_string(), vec![
-                            Operand::Register(rd_reg),
-                            Operand::Modifier(ModifierKind::Hi, symbol.clone())
-                        ]),
-                        line,
-                    },
-                    Statement {
-                        kind: StatementKind::Instruction(name.to_string(), vec![Operand::Register(rd_reg), Operand::Memory { offset: MemoryOffset::Modifier(ModifierKind::Lo, symbol.clone()), reg: rd_reg }]),
-                        line,
-                    }
-                ])
-            } else {
+            if ops.len() != 2 {
                 // If number of operands is not 2, we consider it a base instruction and return it as is.
                 // This is not an error because the assembler will fail later and reference an instruction l{b|h|w} with an invalid operand.
-                Ok(vec![Statement { kind: StatementKind::Instruction(name, ops), line }])
+                return Ok(vec![Statement { kind: StatementKind::Instruction(name, ops), line }]);
             }
+            // auipc rd, symbol[31:12]
+            // l{b|h|w} rd, symbol[11:0](rd)
+            let rd = &ops[0];
+            let symbol = &ops[1];
+            // if second operand is a Label, we consider it a pseudo-instruction and expand it.
+            // Otherwise, we consider it a base instruction and return it as is.
+            let symbol = match symbol {
+                Operand::Label(label) => label.clone(),
+                _ => return Ok(vec![Statement { kind: StatementKind::Instruction(name, ops), line }])
+            };
+            let rd_reg = match rd {
+                Operand::Register(n) => *n,
+                _ => return Err(format!("Invalid first operand for '{}' pseudo-instruction. Expected a register, got {}", name, rd)),
+            };
+            Ok(vec![
+                Statement {
+                    kind: StatementKind::Instruction("auipc".to_string(), vec![
+                        Operand::Register(rd_reg),
+                        Operand::Modifier(ModifierKind::Hi, symbol.clone())
+                    ]),
+                    line,
+                },
+                Statement {
+                    kind: StatementKind::Instruction(name.to_string(), vec![Operand::Register(rd_reg), Operand::Memory { offset: MemoryOffset::Modifier(ModifierKind::Lo, symbol.clone()), reg: rd_reg }]),
+                    line,
+                }
+            ])
         }
         "sb" | "sh" | "sw" => {
-            if ops.len() == 3 {
-                // Pseudo-instruction: s{b|h|w} rd, symbol, rt
-                // Base instructions:  auipc rt, symbol[31:12]
-                //                     s{b|h|w} rd, symbol[11:0](rt)
-                let rd = &ops[0];
-                let symbol = &ops[1];
-                let rt = &ops[2];
-                let rd_reg = match rd {
-                    Operand::Register(n) => *n,
-                    _ => return Err(format!("Invalid first operand for '{}' pseudo-instruction. Expected a register, got {}", name, rd)),
-                };
-                let symbol = match symbol {
-                    Operand::Label(label) => label.clone(),
-                    _ => return Err(format!("Invalid second operand for '{}' pseudo-instruction. Expected a label, got {}", name, symbol)),
-                };
-                let rt_reg = match rt {
-                    Operand::Register(n) => *n,
-                    _ => return Err(format!("Invalid third operand for '{}' pseudo-instruction. Expected a register, got {}", name, rt)),
-                };
-                Ok(vec![
-                    Statement {
-                        kind: StatementKind::Instruction("auipc".to_string(), vec![
-                            Operand::Register(rt_reg),
-                            Operand::Modifier(ModifierKind::Hi, symbol.clone())
-                        ]),
-                        line,
-                    },
-                    Statement {
-                        kind: StatementKind::Instruction(name.to_string(), vec![
-                            Operand::Register(rd_reg),
-                            Operand::Memory { offset: MemoryOffset::Modifier(ModifierKind::Lo, symbol.clone()), reg: rt_reg }
-                        ]),
-                        line,
-                    }
-                ])
-            } else {
-                Ok(vec![Statement { kind: StatementKind::Instruction(name, ops), line }])
+            if ops.len() != 3 {
+                // If number of operands is not 3, we consider it a base instruction and return it as is.
+                return Ok(vec![Statement { kind: StatementKind::Instruction(name, ops), line }]);
             }
+            // Pseudo-instruction: s{b|h|w} rd, symbol, rt
+            // Base instructions:  auipc rt, symbol[31:12]
+            //                     s{b|h|w} rd, symbol[11:0](rt)
+            let rd = &ops[0];
+            let symbol = &ops[1];
+            let rt = &ops[2];
+            let rd_reg = match rd {
+                Operand::Register(n) => *n,
+                _ => return Err(format!("Invalid first operand for '{}' pseudo-instruction. Expected a register, got {}", name, rd)),
+            };
+            let symbol = match symbol {
+                Operand::Label(label) => label.clone(),
+                _ => return Err(format!("Invalid second operand for '{}' pseudo-instruction. Expected a label, got {}", name, symbol)),
+            };
+            let rt_reg = match rt {
+                Operand::Register(n) => *n,
+                _ => return Err(format!("Invalid third operand for '{}' pseudo-instruction. Expected a register, got {}", name, rt)),
+            };
+            Ok(vec![
+                Statement {
+                    kind: StatementKind::Instruction("auipc".to_string(), vec![
+                        Operand::Register(rt_reg),
+                        Operand::Modifier(ModifierKind::Hi, symbol.clone())
+                    ]),
+                    line,
+                },
+                Statement {
+                    kind: StatementKind::Instruction(name.to_string(), vec![
+                        Operand::Register(rd_reg),
+                        Operand::Memory { offset: MemoryOffset::Modifier(ModifierKind::Lo, symbol.clone()), reg: rt_reg }
+                    ]),
+                    line,
+                }
+            ])
         }
         "nop" => {
             if ops.len() == 0 {
@@ -130,191 +129,191 @@ fn expand_statement(statement: Statement) -> Result<Vec<Statement>, String> {
             }
         }
         "li" => {
-            if ops.len() == 2 {
-                let rd = &ops[0];
-                let imm_op = &ops[1];
-                let rd_reg = match rd {
-                    Operand::Register(n) => *n,
-                    _ => return Err(format!("Invalid first operand for 'li' pseudo-instruction. Expected a register, got {}", rd)),
-                };
-                let imm = match imm_op {
-                    Operand::Immediate(n) => *n,
-                    _ => return Err(format!("Invalid second operand for 'li' pseudo-instruction. Expected an immediate, got {}", imm_op)),
-                };
-
-                if (-2048..=2047).contains(&imm) {
-                    Ok(vec![Statement {
-                        kind: StatementKind::Instruction("addi".to_string(), vec![Operand::Register(rd_reg), Operand::Register(0), Operand::Immediate(imm)]),
-                        line,
-                    }])
-                } else {
-                    let hi20 = (imm + 0x800) >> 12;
-                    let lo12 = (imm << 20) >> 20;
-                    Ok(vec![
-                        Statement {
-                            kind: StatementKind::Instruction("lui".to_string(), vec![Operand::Register(rd_reg), Operand::Immediate(hi20)]),
-                            line,
-                        },
-                        Statement {
-                            kind: StatementKind::Instruction("addi".to_string(), vec![Operand::Register(rd_reg), Operand::Register(rd_reg), Operand::Immediate(lo12)]),
-                            line,
-                        }
-                    ])
-                }
-
-            } else {
-                Err(format!("Invalid number of operands for 'li' pseudo-instruction. Expected 2, got {}", ops.len()))
+            if ops.len() != 2 {
+                return Err(format!("Invalid number of operands for 'li' pseudo-instruction. Expected 2, got {}", ops.len()));
             }
+
+               let rd = &ops[0];
+               let imm_op = &ops[1];
+               let rd_reg = match rd {
+                   Operand::Register(n) => *n,
+                   _ => return Err(format!("Invalid first operand for 'li' pseudo-instruction. Expected a register, got {}", rd)),
+               };
+               let imm = match imm_op {
+                   Operand::Immediate(n) => *n,
+                   _ => return Err(format!("Invalid second operand for 'li' pseudo-instruction. Expected an immediate, got {}", imm_op)),
+               };
+
+               if (-2048..=2047).contains(&imm) {
+                   Ok(vec![Statement {
+                       kind: StatementKind::Instruction("addi".to_string(), vec![Operand::Register(rd_reg), Operand::Register(0), Operand::Immediate(imm)]),
+                       line,
+                   }])
+               } else {
+                   let hi20 = (imm + 0x800) >> 12;
+                   let lo12 = (imm << 20) >> 20;
+                   Ok(vec![
+                       Statement {
+                           kind: StatementKind::Instruction("lui".to_string(), vec![Operand::Register(rd_reg), Operand::Immediate(hi20)]),
+                           line,
+                       },
+                       Statement {
+                           kind: StatementKind::Instruction("addi".to_string(), vec![Operand::Register(rd_reg), Operand::Register(rd_reg), Operand::Immediate(lo12)]),
+                           line,
+                       }
+                   ])
+               }
+
         }
         "mv" => {
-            if ops.len() == 2 {
-                let rd = &ops[0];
-                let rs = &ops[1];
-                let rd_reg = match rd {
-                    Operand::Register(n) => *n,
-                    _ => return Err(format!("Invalid first operand for 'mv' pseudo-instruction. Expected a register, got {}", rd)),
-                };
-                let rs_reg = match rs {
-                    Operand::Register(n) => *n,
-                    _ => return Err(format!("Invalid second operand for 'mv' pseudo-instruction. Expected a register, got {}", rs)),
-                };
-                Ok(vec![Statement {
-                    kind: StatementKind::Instruction("addi".to_string(), vec![Operand::Register(rd_reg), Operand::Register(rs_reg), Operand::Immediate(0)]),
-                    line,
-                }])
-            } else {
-                Err(format!("Invalid number of operands for 'mv' pseudo-instruction. Expected 2, got {}", ops.len()))
+            if ops.len() != 2 {
+                return Err(format!("Invalid number of operands for 'mv' pseudo-instruction. Expected 2, got {}", ops.len()));
             }
+
+            let rd = &ops[0];
+            let rs = &ops[1];
+            let rd_reg = match rd {
+                Operand::Register(n) => *n,
+                _ => return Err(format!("Invalid first operand for 'mv' pseudo-instruction. Expected a register, got {}", rd)),
+            };
+            let rs_reg = match rs {
+                Operand::Register(n) => *n,
+                _ => return Err(format!("Invalid second operand for 'mv' pseudo-instruction. Expected a register, got {}", rs)),
+            };
+            Ok(vec![Statement {
+                kind: StatementKind::Instruction("addi".to_string(), vec![Operand::Register(rd_reg), Operand::Register(rs_reg), Operand::Immediate(0)]),
+                line,
+            }])
         }
         "not" => {
-            if ops.len() == 2 {
-                let rd = &ops[0];
-                let rs = &ops[1];
-                let rd_reg = match rd {
-                    Operand::Register(n) => *n,
-                    _ => return Err(format!("Invalid first operand for 'not' pseudo-instruction. Expected a register, got {}", rd)),
-                };
-                let rs_reg = match rs {
-                    Operand::Register(n) => *n,
-                    _ => return Err(format!("Invalid second operand for 'not' pseudo-instruction. Expected a register, got {}", rs)),
-                };
-                Ok(vec![Statement {
-                    kind: StatementKind::Instruction("xori".to_string(), vec![Operand::Register(rd_reg), Operand::Register(rs_reg), Operand::Immediate(-1)]),
-                    line,
-                }])
-            } else {
-                Err(format!("Invalid number of operands for 'not' pseudo-instruction. Expected 2, got {}", ops.len()))
+            if ops.len() != 2 {
+                return Err(format!("Invalid number of operands for 'not' pseudo-instruction. Expected 2, got {}", ops.len()));
             }
+
+            let rd = &ops[0];
+            let rs = &ops[1];
+            let rd_reg = match rd {
+                Operand::Register(n) => *n,
+                _ => return Err(format!("Invalid first operand for 'not' pseudo-instruction. Expected a register, got {}", rd)),
+            };
+            let rs_reg = match rs {
+                Operand::Register(n) => *n,
+                _ => return Err(format!("Invalid second operand for 'not' pseudo-instruction. Expected a register, got {}", rs)),
+            };
+            Ok(vec![Statement {
+                kind: StatementKind::Instruction("xori".to_string(), vec![Operand::Register(rd_reg), Operand::Register(rs_reg), Operand::Immediate(-1)]),
+                line,
+            }])
         }
         "neg" => {
-            if ops.len() == 2 {
-                let rd = &ops[0];
-                let rs = &ops[1];
-                let rd_reg = match rd {
-                    Operand::Register(n) => *n,
-                    _ => return Err(format!("Invalid first operand for 'neg' pseudo-instruction. Expected a register, got {}", rd)),
-                };
-                let rs_reg = match rs {
-                    Operand::Register(n) => *n,
-                    _ => return Err(format!("Invalid second operand for 'neg' pseudo-instruction. Expected a register, got {}", rs)),
-                };
-                Ok(vec![Statement {
-                    kind: StatementKind::Instruction("sub".to_string(), vec![
-                        Operand::Register(rd_reg), Operand::Register(0), Operand::Register(rs_reg)
-                    ]),
-                    line,
-                }])
-            } else {
-                Err(format!("Invalid number of operands for 'neg' pseudo-instruction. Expected 2, got {}", ops.len()))
+            if ops.len() != 2 {
+                return Err(format!("Invalid number of operands for 'neg' pseudo-instruction. Expected 2, got {}", ops.len()));
             }
+
+            let rd = &ops[0];
+            let rs = &ops[1];
+            let rd_reg = match rd {
+                Operand::Register(n) => *n,
+                _ => return Err(format!("Invalid first operand for 'neg' pseudo-instruction. Expected a register, got {}", rd)),
+            };
+            let rs_reg = match rs {
+                Operand::Register(n) => *n,
+                _ => return Err(format!("Invalid second operand for 'neg' pseudo-instruction. Expected a register, got {}", rs)),
+            };
+            Ok(vec![Statement {
+                kind: StatementKind::Instruction("sub".to_string(), vec![
+                    Operand::Register(rd_reg), Operand::Register(0), Operand::Register(rs_reg)
+                ]),
+                line,
+            }])
         }
         "seqz" => {
-            if ops.len() == 2 {
-                let rd = &ops[0];
-                let rs = &ops[1];
-                let rd_reg = match rd {
-                    Operand::Register(n) => *n,
-                    _ => return Err(format!("Invalid first operand for 'seqz' pseudo-instruction. Expected a register, got {}", rd)),
-                };
-                let rs_reg = match rs {
-                    Operand::Register(n) => *n,
-                    _ => return Err(format!("Invalid second operand for 'seqz' pseudo-instruction. Expected a register, got {}", rs)),
-                };
-                Ok(vec![Statement {
-                    kind: StatementKind::Instruction("sltiu".to_string(), vec![
-                        Operand::Register(rd_reg), Operand::Register(rs_reg), Operand::Immediate(1)
-                    ]),
-                    line,
-                }])
-            } else {
-                Err(format!("Invalid number of operands for 'seqz' pseudo-instruction. Expected 2, got {}", ops.len()))
+            if ops.len() != 2 {
+                return Err(format!("Invalid number of operands for 'seqz' pseudo-instruction. Expected 2, got {}", ops.len()));
             }
+
+            let rd = &ops[0];
+            let rs = &ops[1];
+            let rd_reg = match rd {
+                Operand::Register(n) => *n,
+                _ => return Err(format!("Invalid first operand for 'seqz' pseudo-instruction. Expected a register, got {}", rd)),
+            };
+            let rs_reg = match rs {
+                Operand::Register(n) => *n,
+                _ => return Err(format!("Invalid second operand for 'seqz' pseudo-instruction. Expected a register, got {}", rs)),
+            };
+            Ok(vec![Statement {
+                kind: StatementKind::Instruction("sltiu".to_string(), vec![
+                    Operand::Register(rd_reg), Operand::Register(rs_reg), Operand::Immediate(1)
+                ]),
+                line,
+            }])
         }
         "snez" => {
-            if ops.len() == 2 {
-                let rd = &ops[0];
-                let rs = &ops[1];
-                let rd_reg = match rd {
-                    Operand::Register(n) => *n,
-                    _ => return Err(format!("Invalid first operand for 'snez' pseudo-instruction. Expected a register, got {}", rd)),
-                };
-                let rs_reg = match rs {
-                    Operand::Register(n) => *n,
-                    _ => return Err(format!("Invalid second operand for 'snez' pseudo-instruction. Expected a register, got {}", rs)),
-                };
-                Ok(vec![Statement {
-                    kind: StatementKind::Instruction("sltu".to_string(), vec![
-                        Operand::Register(rd_reg), Operand::Register(0), Operand::Register(rs_reg)
-                    ]),
-                    line,
-                }])
-            } else {
-                Err(format!("Invalid number of operands for 'snez' pseudo-instruction. Expected 2, got {}", ops.len()))
+            if ops.len() != 2 {
+                return Err(format!("Invalid number of operands for 'snez' pseudo-instruction. Expected 2, got {}", ops.len()));
             }
+
+            let rd = &ops[0];
+            let rs = &ops[1];
+            let rd_reg = match rd {
+                Operand::Register(n) => *n,
+                _ => return Err(format!("Invalid first operand for 'snez' pseudo-instruction. Expected a register, got {}", rd)),
+            };
+            let rs_reg = match rs {
+                Operand::Register(n) => *n,
+                _ => return Err(format!("Invalid second operand for 'snez' pseudo-instruction. Expected a register, got {}", rs)),
+            };
+            Ok(vec![Statement {
+                kind: StatementKind::Instruction("sltu".to_string(), vec![
+                    Operand::Register(rd_reg), Operand::Register(0), Operand::Register(rs_reg)
+                ]),
+                line,
+            }])
         }
         "sltz" => {
-            if ops.len() == 2 {
-                let rd = &ops[0];
-                let rs = &ops[1];
-                let rd_reg = match rd {
-                    Operand::Register(n) => *n,
-                    _ => return Err(format!("Invalid first operand for 'sltz' pseudo-instruction. Expected a register, got {}", rd)),
-                };
-                let rs_reg = match rs {
-                    Operand::Register(n) => *n,
-                    _ => return Err(format!("Invalid second operand for 'sltz' pseudo-instruction. Expected a register, got {}", rs)),
-                };
-                Ok(vec![Statement {
-                    kind: StatementKind::Instruction("slti".to_string(), vec![
-                        Operand::Register(rd_reg), Operand::Register(rs_reg), Operand::Immediate(0)
-                    ]),
-                    line,
-                }])
-            } else {
-                Err(format!("Invalid number of operands for 'sltz' pseudo-instruction. Expected 2, got {}", ops.len()))
+            if ops.len() != 2 {
+                return Err(format!("Invalid number of operands for 'sltz' pseudo-instruction. Expected 2, got {}", ops.len()));
             }
+
+            let rd = &ops[0];
+            let rs = &ops[1];
+            let rd_reg = match rd {
+                Operand::Register(n) => *n,
+                _ => return Err(format!("Invalid first operand for 'sltz' pseudo-instruction. Expected a register, got {}", rd)),
+            };
+            let rs_reg = match rs {
+                Operand::Register(n) => *n,
+                _ => return Err(format!("Invalid second operand for 'sltz' pseudo-instruction. Expected a register, got {}", rs)),
+            };
+            Ok(vec![Statement {
+                kind: StatementKind::Instruction("slti".to_string(), vec![
+                    Operand::Register(rd_reg), Operand::Register(rs_reg), Operand::Immediate(0)
+                ]),
+                line,
+            }])
         }
         "sgtz" => {
-            if ops.len() == 2 {
-                let rd = &ops[0];
-                let rs = &ops[1];
-                let rd_reg = match rd {
-                    Operand::Register(n) => *n,
-                    _ => return Err(format!("Invalid first operand for 'sgtz' pseudo-instruction. Expected a register, got {}", rd)),
-                };
-                let rs_reg = match rs {
-                    Operand::Register(n) => *n,
-                    _ => return Err(format!("Invalid second operand for 'sgtz' pseudo-instruction. Expected a register, got {}", rs)),
-                };
-                Ok(vec![Statement {
-                    kind: StatementKind::Instruction("slt".to_string(), vec![
-                        Operand::Register(rd_reg), Operand::Register(0), Operand::Register(rs_reg)
-                    ]),
-                    line,
-                }])
-            } else {
-                Err(format!("Invalid number of operands for 'sgtz' pseudo-instruction. Expected 2, got {}", ops.len()))
+            if ops.len() != 2 {
+                return Err(format!("Invalid number of operands for 'sgtz' pseudo-instruction. Expected 2, got {}", ops.len()));
             }
+
+            let rd = &ops[0];
+            let rs = &ops[1];
+            let rd_reg = match rd {
+                Operand::Register(n) => *n,
+                _ => return Err(format!("Invalid first operand for 'sgtz' pseudo-instruction. Expected a register, got {}", rd)),
+            };
+            let rs_reg = match rs {
+                Operand::Register(n) => *n,
+                _ => return Err(format!("Invalid second operand for 'sgtz' pseudo-instruction. Expected a register, got {}", rs)),
+            };
+            Ok(vec![Statement {
+                kind: StatementKind::Instruction("slt".to_string(), vec![
+                    Operand::Register(rd_reg), Operand::Register(0), Operand::Register(rs_reg)
+                ]),
+                line,
+            }])
         }
         "j" => {
             if ops.len() == 1 {
