@@ -18,6 +18,32 @@ fn expand_statement(statement: Statement) -> Result<Vec<Statement>, String> {
     let StatementKind::Instruction(name, ops) = statement.kind else { return Ok(vec![statement]) };
 
     match name.as_str() {
+        "la" => {
+            if ops.len() == 2 {
+                let rd = &ops[0];
+                let symbol = &ops[1];
+                let rd_reg = match rd {
+                    Operand::Register(n) => *n,
+                    _ => return Err(format!("Invalid first operand for 'la' pseudo-instruction. Expected a register, got {}", rd)),
+                };
+                let symbol = match symbol {
+                    Operand::Label(label) => label.clone(),
+                    _ => return Err(format!("Invalid second operand for 'la' pseudo-instruction. Expected a label, got {}", symbol)),
+                };
+                Ok(vec![
+                    Statement {
+                        kind: StatementKind::Instruction("auipc".to_string(), vec![Operand::Register(rd_reg), Operand::Modifier(ModifierKind::Hi, symbol.clone())]),
+                        line,
+                    },
+                    Statement {
+                        kind: StatementKind::Instruction("addi".to_string(), vec![Operand::Register(rd_reg), Operand::Register(rd_reg), Operand::Modifier(ModifierKind::Lo, symbol.clone())]),
+                        line,
+                    }
+                ])
+            } else {
+                Err(format!("Invalid number of operands for 'la' pseudo-instruction. Expected 2, got {}", ops.len()))
+            }
+        }
         "j" => {
             if ops.len() == 1 {
                 let offset = ops.into_iter().next().unwrap();
@@ -78,7 +104,7 @@ fn expand_statement(statement: Statement) -> Result<Vec<Statement>, String> {
             }
         }
         "ret" => {
-            if ops.len() == 0 {
+            if ops.is_empty() {
                 Ok(vec![Statement {
                     kind: StatementKind::Instruction("jalr".to_string(), vec![
                         Operand::Register(0),
@@ -97,7 +123,7 @@ fn expand_statement(statement: Statement) -> Result<Vec<Statement>, String> {
                 // Validate offset is an Immediate or Label
                 let (offset_high, offset_low) = match offset {
                     Operand::Immediate(imm) => (
-                        Operand::Immediate((imm + 0x800) >> 12),
+                        Operand::Immediate(((imm + 0x800) >> 12) as i32),
                         Operand::Immediate((imm << 20) >> 20),
                     ),
                     Operand::Label(label) => (
@@ -131,7 +157,7 @@ fn expand_statement(statement: Statement) -> Result<Vec<Statement>, String> {
                 // Validate offset is an Immediate or Label
                 let (offset_high, offset_low) = match offset {
                     Operand::Immediate(imm) => (
-                        Operand::Immediate((imm + 0x800) >> 12),
+                        Operand::Immediate(((imm + 0x800) >> 12) as i32),
                         Operand::Immediate((imm << 20) >> 20),
                     ),
                     Operand::Label(label) => (
@@ -167,6 +193,49 @@ fn expand_statement(statement: Statement) -> Result<Vec<Statement>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_expand_la() {
+        let statement = Statement {
+            kind: StatementKind::Instruction("la".to_string(), vec![Operand::Register(1), Operand::Label("label".to_string())]),
+            line: 1,
+        };
+        let expanded = expand_statement(statement).unwrap();
+        assert_eq!(expanded.len(), 2);
+        assert_eq!(expanded[0].kind, StatementKind::Instruction("auipc".to_string(), vec![Operand::Register(1), Operand::Modifier(ModifierKind::Hi, "label".to_string())]));
+        assert_eq!(expanded[1].kind, StatementKind::Instruction("addi".to_string(), vec![Operand::Register(1), Operand::Register(1), Operand::Modifier(ModifierKind::Lo, "label".to_string())]));
+    }
+
+    #[test]
+    fn test_expand_la_invalid_parameters() {
+        // invalid number of parameters
+        let statement = Statement {
+            kind: StatementKind::Instruction("la".to_string(), vec![Operand::Immediate(1), Operand::Immediate(2), Operand::Immediate(3)]),
+            line: 1,
+        };
+        let expanded = expand_statement(statement);
+        assert!(expanded.is_err());
+        assert_eq!(expanded.unwrap_err(), "Invalid number of operands for 'la' pseudo-instruction. Expected 2, got 3");
+
+        // TODO maybe the following error messages should be more specific and say Immediate(1) or Register(..) instead of the display
+
+        // invalid first parameter, expected register
+        let statement = Statement {
+            kind: StatementKind::Instruction("la".to_string(), vec![Operand::Immediate(1), Operand::Label("label".to_string())]),
+            line: 1,
+        };
+        let expanded = expand_statement(statement);
+        assert!(expanded.is_err());
+        assert_eq!(expanded.unwrap_err(), "Invalid first operand for 'la' pseudo-instruction. Expected a register, got 1");
+        // invalid second parameter, expected label
+        let statement = Statement {
+            kind: StatementKind::Instruction("la".to_string(), vec![Operand::Register(1), Operand::Register(2)]),
+            line: 1,
+        };
+        let expanded = expand_statement(statement);
+        assert!(expanded.is_err());
+        assert_eq!(expanded.unwrap_err(), "Invalid second operand for 'la' pseudo-instruction. Expected a label, got x2");
+    }
 
     #[test]
     fn test_expand_no_pseudoinstruction() {
