@@ -2,9 +2,10 @@ use crate::lexer::ModifierKind;
 use crate::parser::{Operand, Statement, StatementKind};
 
 pub fn expand(statements: Vec<Statement>) -> Result<Vec<Statement>, String> {
-    let mut expanded_statements = Vec::new();
+    // Preallocate memory for the expanded statements
+    let mut expanded_statements = Vec::with_capacity(statements.len());
     for statement in statements {
-        expanded_statements.extend(expand_statement(&statement)?);
+        expanded_statements.extend(expand_statement(statement)?);
     }
     Ok(expanded_statements)
 }
@@ -12,17 +13,18 @@ pub fn expand(statements: Vec<Statement>) -> Result<Vec<Statement>, String> {
 // Given an statement, return it as [statement] if it is not a pseudo-instruction.
 // If it is a pseudo-instruction, expand it to one or more base instructions
 // and return the new list of instructions.
-fn expand_statement(statement: &Statement) -> Result<Vec<Statement>, String> {
-    match &statement.kind {
-        StatementKind::Instruction(name, ops) => {
-            match name.as_str() {
+fn expand_statement(statement: Statement) -> Result<Vec<Statement>, String> {
+    let line = statement.line;
+    let StatementKind::Instruction(name, ops) = statement.kind else { return Ok(vec![statement]) };
+
+    match name.as_str() {
                 "j" => {
                     if ops.len() == 1 {
-                        let offset = ops[0].clone();
+                        let offset = ops.into_iter().next().unwrap();
                         // TODO validate is a valid offset? if not, the assembler will fail later and reference an instruction jal with an invalid offset
                         Ok(vec![Statement {
                             kind: StatementKind::Instruction("jal".to_string(), vec![Operand::Register(0), offset]),
-                            line: statement.line,
+                            line,
                         }])
                     } else {
                         // TODO make the error message more similar to those in the assembler.rs i.e. "Invalid operands for J-type instruction"
@@ -31,19 +33,19 @@ fn expand_statement(statement: &Statement) -> Result<Vec<Statement>, String> {
                 }
                 "jal" => {
                     if ops.len() == 1 {
-                        let offset = ops[0].clone();
+                        let offset = ops.into_iter().next().unwrap();
                         // TODO validate is a valid offset? if not, the assembler will fail later and reference an instruction jal already expanded
                         Ok(vec![Statement {
                             kind: StatementKind::Instruction("jal".to_string(), vec![Operand::Register(1), offset]),
-                            line: statement.line,
+                            line,
                         }])
                     } else {
-                        Ok(vec![statement.clone()])
+                        Ok(vec![Statement { kind: StatementKind::Instruction(name, ops), line }])
                     }
                 }
                 "jr" => {
                     if ops.len() == 1 {
-                        let rs = ops[0].clone();
+                        let rs = ops.into_iter().next().unwrap();
                         let rs_reg = match rs {
                             Operand::Register(n) => n,
                             _ => return Err(format!("Invalid operand for 'jr' pseudo-instruction. Expected a register, got {}", rs)),
@@ -52,7 +54,7 @@ fn expand_statement(statement: &Statement) -> Result<Vec<Statement>, String> {
                             kind: StatementKind::Instruction("jalr".to_string(), vec![
                                 Operand::Register(0), Operand::Register(rs_reg), Operand::Immediate(0)
                             ]),
-                            line: statement.line,
+                            line,
                         }])
                     } else {
                         Err(format!("Invalid number of operands for 'jr' pseudo-instruction. Expected 1, got {}", ops.len()))
@@ -60,7 +62,7 @@ fn expand_statement(statement: &Statement) -> Result<Vec<Statement>, String> {
                 }
                 "jalr" => {
                     if ops.len() == 1 {
-                        let rs = ops[0].clone();
+                        let rs = ops.into_iter().next().unwrap();
                         let rs_reg = match rs {
                             Operand::Register(n) => n,
                             _ => return Err(format!("Invalid operand for 'jalr' pseudo-instruction. Expected a register, got {}", rs)),
@@ -69,10 +71,10 @@ fn expand_statement(statement: &Statement) -> Result<Vec<Statement>, String> {
                             kind: StatementKind::Instruction("jalr".to_string(), vec![
                                 Operand::Register(1), Operand::Register(rs_reg), Operand::Immediate(0)
                             ]),
-                            line: statement.line,
+                            line,
                         }])
                     } else {
-                        Ok(vec![statement.clone()])
+                        Ok(vec![Statement { kind: StatementKind::Instruction(name, ops), line }])
                     }
                 }
                 "ret" => {
@@ -83,7 +85,7 @@ fn expand_statement(statement: &Statement) -> Result<Vec<Statement>, String> {
                                 Operand::Register(1),
                                 Operand::Immediate(0)
                             ]),
-                            line: statement.line,
+                            line,
                         }])
                     } else {
                         Err(format!("Invalid number of operands for 'ret' pseudo-instruction. Expected 0, got {}", ops.len()))
@@ -91,7 +93,7 @@ fn expand_statement(statement: &Statement) -> Result<Vec<Statement>, String> {
                 }
                 "call" => {
                     if ops.len() == 1 {
-                        let offset = ops[0].clone();
+                        let offset = ops.into_iter().next().unwrap();
                         // Validate offset is an Immediate or Label
                         let (offset_high, offset_low) = match offset {
                             Operand::Immediate(imm) => (
@@ -100,7 +102,7 @@ fn expand_statement(statement: &Statement) -> Result<Vec<Statement>, String> {
                             ),
                             Operand::Label(label) => (
                                 Operand::Modifier(ModifierKind::Hi, label.clone()),
-                                Operand::Modifier(ModifierKind::Lo, label.clone())
+                                Operand::Modifier(ModifierKind::Lo, label)
                             ),
                             _ => return Err(format!("Invalid operand for 'call' pseudo-instruction. Expected an immediate or label, got {}", offset)),
                         };
@@ -109,7 +111,7 @@ fn expand_statement(statement: &Statement) -> Result<Vec<Statement>, String> {
                                 Operand::Register(1),
                                 offset_high,
                             ]),
-                            line: statement.line,
+                            line,
                         },
                             Statement {
                             kind: StatementKind::Instruction("jalr".to_string(), vec![
@@ -117,7 +119,7 @@ fn expand_statement(statement: &Statement) -> Result<Vec<Statement>, String> {
                                 Operand::Register(1),
                                 offset_low,
                             ]),
-                            line: statement.line,
+                            line,
                         }])
                     } else {
                         Err(format!("Invalid number of operands for 'call' pseudo-instruction. Expected 1, got {}", ops.len()))
@@ -125,7 +127,7 @@ fn expand_statement(statement: &Statement) -> Result<Vec<Statement>, String> {
                 }
                 "tail" => {
                     if ops.len() == 1 {
-                        let offset = ops[0].clone();
+                        let offset = ops.into_iter().next().unwrap();
                         // Validate offset is an Immediate or Label
                         let (offset_high, offset_low) = match offset {
                             Operand::Immediate(imm) => (
@@ -134,7 +136,7 @@ fn expand_statement(statement: &Statement) -> Result<Vec<Statement>, String> {
                             ),
                             Operand::Label(label) => (
                                 Operand::Modifier(ModifierKind::Hi, label.clone()),
-                                Operand::Modifier(ModifierKind::Lo, label.clone())
+                                Operand::Modifier(ModifierKind::Lo, label)
                             ),
                             _ => return Err(format!("Invalid operand for 'tail' pseudo-instruction. Expected an immediate or label, got {}", offset)),
                         };
@@ -143,7 +145,7 @@ fn expand_statement(statement: &Statement) -> Result<Vec<Statement>, String> {
                                 Operand::Register(6),
                                 offset_high,
                             ]),
-                            line: statement.line,
+                            line,
                         },
                             Statement {
                             kind: StatementKind::Instruction("jalr".to_string(), vec![
@@ -151,17 +153,14 @@ fn expand_statement(statement: &Statement) -> Result<Vec<Statement>, String> {
                                 Operand::Register(6),
                                 offset_low,
                             ]),
-                            line: statement.line,
+                            line,
                         }])
                     } else {
                         Err(format!("Invalid number of operands for 'tail' pseudo-instruction. Expected 1, got {}", ops.len()))
                     }
                 }
-                _ => Ok(vec![statement.clone()]),
+                _ => Ok(vec![Statement { kind: StatementKind::Instruction(name, ops), line }]),
             }
-        }
-        _ => Ok(vec![statement.clone()]),
-    }
 }
 
 
@@ -171,12 +170,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_expand_no_pseudoinstruction() {
+        let statement = Statement {
+            kind: StatementKind::Instruction("add".to_string(), vec![Operand::Register(1), Operand::Register(2), Operand::Register(3)]),
+            line: 1,
+        };
+        let expanded = expand_statement(statement).unwrap();
+        assert_eq!(expanded.len(), 1);
+        assert_eq!(expanded[0].kind, StatementKind::Instruction("add".to_string(), vec![Operand::Register(1), Operand::Register(2), Operand::Register(3)]));
+    }
+
+    #[test]
     fn test_expand_j() {
         let statement = Statement {
             kind: StatementKind::Instruction("j".to_string(), vec![Operand::Immediate(10)]),
             line: 1,
         };
-        let expanded = expand_statement(&statement).unwrap();
+        let expanded = expand_statement(statement).unwrap();
         assert_eq!(expanded.len(), 1);
         assert_eq!(expanded[0].kind, StatementKind::Instruction("jal".to_string(), vec![Operand::Register(0), Operand::Immediate(10)]));
     }
@@ -187,7 +197,7 @@ mod tests {
             kind: StatementKind::Instruction("jal".to_string(), vec![Operand::Label("loop".to_string())]),
             line: 1,
         };
-        let expanded = expand_statement(&statement).unwrap();
+        let expanded = expand_statement(statement).unwrap();
         assert_eq!(expanded.len(), 1);
         assert_eq!(expanded[0].kind, StatementKind::Instruction(
             "jal".to_string(),
@@ -201,7 +211,7 @@ mod tests {
             kind: StatementKind::Instruction("jalr".to_string(), vec![Operand::Register(9)]),
             line: 1,
         };
-        let expanded = expand_statement(&statement).unwrap();
+        let expanded = expand_statement(statement).unwrap();
         assert_eq!(expanded.len(), 1);
         assert_eq!(expanded[0].kind, StatementKind::Instruction(
             "jalr".to_string(),
@@ -215,7 +225,7 @@ mod tests {
             kind: StatementKind::Instruction("call".to_string(), vec![Operand::Label("loop".to_string())]),
             line: 1,
         };
-        let expanded = expand_statement(&statement).unwrap();
+        let expanded = expand_statement(statement).unwrap();
         assert_eq!(expanded.len(), 2);
         assert_eq!(expanded[0].kind, StatementKind::Instruction(
             "auipc".to_string(),
@@ -233,7 +243,7 @@ mod tests {
             kind: StatementKind::Instruction("tail".to_string(), vec![Operand::Label("loop".to_string())]),
             line: 1,
         };
-        let expanded = expand_statement(&statement).unwrap();
+        let expanded = expand_statement(statement).unwrap();
         assert_eq!(expanded.len(), 2);
         assert_eq!(expanded[0].kind, StatementKind::Instruction(
             "auipc".to_string(),

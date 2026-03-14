@@ -3,7 +3,7 @@ use std::fmt;
 
 use crate::lexer::{SpannedToken, Token, ModifierKind};
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq)]
 pub struct ParseError {
     pub line: usize,
     pub message: String,
@@ -15,7 +15,7 @@ impl fmt::Display for ParseError {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq)]
 pub enum MemoryOffset {
     Immediate(i32),
     Label(String),
@@ -38,7 +38,7 @@ impl fmt::Display for MemoryOffset {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq)]
 pub enum Operand {
     Register(u8),
     Immediate(i32),
@@ -67,13 +67,13 @@ impl fmt::Display for Operand {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq)]
 pub struct Statement {
     pub kind: StatementKind,
     pub line: usize,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq)]
 pub enum StatementKind {
     Instruction(String, Vec<Operand>),
     Label(String),
