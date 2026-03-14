@@ -7,7 +7,7 @@ A RISC-V Assembler and Emulator implementation in Rust.
 ## Features
 
 - **Interactive TUI**: Real-time visualization of the processor state, memory, and logs.
-- **Modular Pipeline**: Separate stages for lexing, parsing, symbol resolution, assembly, and execution.
+- **Modular Pipeline**: Separate stages for lexing, parsing, pseudo-instruction expansion, symbol resolution, assembly, and execution.
 - **RV32I Support**: Implements decoding and execution for the base integer instruction set, including:
   - Arithmetic and Logical operations (R-type and I-type).
   - Memory operations (Loads and Stores).
@@ -23,7 +23,6 @@ A RISC-V Assembler and Emulator implementation in Rust.
 
 ## Pending Features
 
-- **Pseudoinstructions**
 - **Memory System and Faults**: Implement proper memory system and fault handling for out-of-bounds, unaligned, and non-executable access.
 - **Privileged ISA Specification**
 - **System Instructions**: Implement `ECALL` for system calls.
@@ -36,6 +35,7 @@ A RISC-V Assembler and Emulator implementation in Rust.
 - `src/assembler.rs`: Converts instructions and data into binary segments.
 - `src/symbols.rs`: Handles label definitions and address resolution.
 - `src/parser.rs`: Parses tokens into abstract statements.
+- `src/pseudo.rs`: Expands pseudo-instructions into base instructions.
 - `src/lexer.rs`: Tokenizes assembly source into a stream of tokens.
 - `src/config.rs`: Central configuration for memory base addresses and architectural constants.
 
