@@ -209,6 +209,38 @@ fn expand_statement(statement: Statement) -> Result<Vec<Statement>, String> {
                 vec![Operand::Register(rd), Operand::Register(0), Operand::Register(rs)]
             })
         }
+        // Branch if compares with zero
+        "beqz" => {
+            expand_branch_compares_with_zero(&name, ops, "beq", line, |rs, offset| {
+                vec![Operand::Register(rs), Operand::Register(0), offset]
+            })
+        },
+        "bnez" => {
+            expand_branch_compares_with_zero(&name, ops, "bne", line, |rs, offset| {
+                vec![Operand::Register(rs), Operand::Register(0), offset]
+            })
+        },
+        "blez" => {
+            expand_branch_compares_with_zero(&name, ops, "bge", line, |rs, offset| {
+                vec![Operand::Register(0), Operand::Register(rs), offset]
+            })
+        },
+        "bgez" => {
+            expand_branch_compares_with_zero(&name, ops, "bge", line, |rs, offset| {
+                vec![Operand::Register(rs), Operand::Register(0), offset]
+            })
+        },
+        "bltz" => {
+            expand_branch_compares_with_zero(&name, ops, "blt", line, |rs, offset| {
+                vec![Operand::Register(rs), Operand::Register(0), offset]
+            })
+        },
+        "bgtz" => {
+            expand_branch_compares_with_zero(&name, ops, "blt", line, |rs, offset| {
+                vec![Operand::Register(0), Operand::Register(rs), offset]
+            })
+        },
+        // TODO Branch if bgt / ble / bgtu / bleu
         "j" => {
             expand_1op(&name, ops, "jal", line, |offset| vec![Operand::Register(0), offset])
         }
@@ -369,6 +401,29 @@ where
     };
     Ok(vec![Statement {
         kind: StatementKind::Instruction(base_name.to_string(), op_builder(rd_reg, rs_reg)),
+        line,
+    }])
+}
+
+fn expand_branch_compares_with_zero<F>(name: &str, ops: Vec<Operand>, base_name: &str, line: usize, op_builder: F) -> Result<Vec<Statement>, String>
+where
+    F: FnOnce(u8, Operand) -> Vec<Operand>
+{
+    if ops.len() != 2 {
+        return Err(format!("Invalid number of operands for '{}' pseudo-instruction. Expected 2, got {}", name, ops.len()));
+    }
+    let rd = &ops[0];
+    let rs = &ops[1];
+    let rd_reg = match rd {
+        Operand::Register(n) => *n,
+        _ => return Err(format!("Invalid first operand for '{}' pseudo-instruction. Expected a register, got {}", name, rd)),
+    };
+    let symbol = match rs {
+        Operand::Label(label) => label,
+        _ => return Err(format!("Invalid second operand for '{}' pseudo-instruction. Expected a label, got {}", name, rs)),
+    };
+    Ok(vec![Statement {
+        kind: StatementKind::Instruction(base_name.to_string(), op_builder(rd_reg, Operand::Label(symbol.clone()))),
         line,
     }])
 }
@@ -616,6 +671,12 @@ mod tests {
             ("snez", vec![Operand::Register(11), Operand::Register(12)], "sltu", vec![Operand::Register(11), Operand::Register(0), Operand::Register(12)]),
             ("sltz", vec![Operand::Register(11), Operand::Register(12)], "slti", vec![Operand::Register(11), Operand::Register(12), Operand::Immediate(0)]),
             ("sgtz", vec![Operand::Register(11), Operand::Register(12)], "slt", vec![Operand::Register(11), Operand::Register(0), Operand::Register(12)]),
+            ("beqz", vec![Operand::Register(11), Operand::Label("label".to_string())], "beq", vec![Operand::Register(11), Operand::Register(0), Operand::Label("label".to_string())]),
+            ("bnez", vec![Operand::Register(11), Operand::Label("label".to_string())], "bne", vec![Operand::Register(11), Operand::Register(0), Operand::Label("label".to_string())]),
+            ("blez", vec![Operand::Register(11), Operand::Label("label".to_string())], "bge", vec![Operand::Register(0), Operand::Register(11), Operand::Label("label".to_string())]),
+            ("bgez", vec![Operand::Register(11), Operand::Label("label".to_string())], "bge", vec![Operand::Register(11), Operand::Register(0), Operand::Label("label".to_string())]),
+            ("bltz", vec![Operand::Register(11), Operand::Label("label".to_string())], "blt", vec![Operand::Register(11), Operand::Register(0), Operand::Label("label".to_string())]),
+            ("bgtz", vec![Operand::Register(11), Operand::Label("label".to_string())], "blt", vec![Operand::Register(0), Operand::Register(11), Operand::Label("label".to_string())]),
             ("j", vec![Operand::Immediate(10)], "jal", vec![Operand::Register(0), Operand::Immediate(10)]),
             ("j", vec![Operand::Label("label".to_string())], "jal", vec![Operand::Register(0), Operand::Label("label".to_string())]),
             ("jal", vec![Operand::Label("label".to_string())], "jal", vec![Operand::Register(1), Operand::Label("label".to_string())]),
