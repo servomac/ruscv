@@ -320,7 +320,7 @@ fn resolve_modifier(kind: &ModifierKind, name: &str, sym_table: &SymbolTable) ->
         ModifierKind::Hi => {
             // %hi(addr) = (addr + 0x800) >> 12
             // 0x800 is the offset to make the address positive and sign-extend it to 32 bits
-            Ok(((addr + 0x800) >> 12) as i32)
+            Ok(((addr as i64 + 0x800) >> 12) as i32)
         }
         ModifierKind::Lo => {
             Ok(((addr << 20) as i32) >> 20)

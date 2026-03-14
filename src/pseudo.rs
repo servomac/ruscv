@@ -160,7 +160,7 @@ fn expand_statement(statement: Statement) -> Result<Vec<Statement>, String> {
                     line,
                 }])
             } else {
-                let hi20 = (imm + 0x800) >> 12;
+                let hi20 = ((imm as i64 + 0x800) >> 12) as i32;
                 let lo12 = (imm << 20) >> 20;
                 Ok(vec![
                     Statement {
@@ -674,7 +674,23 @@ mod tests {
         );
     }
 
-        #[test]
+    #[test]
+    fn test_expand_li_max_i32() {
+        let statement = Statement {
+            kind: StatementKind::Instruction("li".to_string(), vec![Operand::Register(1), Operand::Immediate(0x7FFFFFFF)]),
+            line: 1,
+        };
+        let expanded = expand_statement(statement).unwrap();
+        assert_eq!(expanded.len(), 2);
+        // hi20 = (0x7FFFFFFF + 0x800) >> 12 = 0x80000 (wrapping)
+        // lo12 = (0x7FFFFFFF << 20) >> 20 = -1
+        assert_eq!(expanded[0].kind, StatementKind::Instruction("lui".to_string(), vec![
+            Operand::Register(1), Operand::Immediate(0x80000u32 as i32)]));
+        assert_eq!(expanded[1].kind, StatementKind::Instruction("addi".to_string(), vec![
+            Operand::Register(1), Operand::Register(1), Operand::Immediate(-1)]));
+    }
+
+    #[test]
     fn test_expand_call() {
         let statement = Statement {
             kind: StatementKind::Instruction("call".to_string(), vec![Operand::Label("loop".to_string())]),
