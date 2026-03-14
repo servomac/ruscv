@@ -19,18 +19,21 @@ fn expand_statement(statement: Statement) -> Result<Vec<Statement>, String> {
 
     match name.as_str() {
         "la" => {
+            // TODO: Technically, 'la' should expand to %pcrel_hi/%pcrel_lo for PC-relative addressing.
+            // Currently using %hi/%lo (absolute) as PC-relative modifiers are not yet implemented.
             if ops.len() != 2 {
                 return Err(format!("Invalid number of operands for 'la' pseudo-instruction. Expected 2, got {}", ops.len()));
             }
 
-            let rd = &ops[0];
-            let symbol = &ops[1];
+            let mut ops_iter = ops.into_iter();
+            let rd = ops_iter.next().unwrap();
+            let symbol = ops_iter.next().unwrap();
             let rd_reg = match rd {
-                Operand::Register(n) => *n,
+                Operand::Register(n) => n,
                 _ => return Err(format!("Invalid first operand for 'la' pseudo-instruction. Expected a register, got {}", rd)),
             };
             let symbol = match symbol {
-                Operand::Label(label) => label.clone(),
+                Operand::Label(label) => label,
                 _ => return Err(format!("Invalid second operand for 'la' pseudo-instruction. Expected a label, got {}", symbol)),
             };
             Ok(vec![
@@ -39,7 +42,7 @@ fn expand_statement(statement: Statement) -> Result<Vec<Statement>, String> {
                     line,
                 },
                 Statement {
-                    kind: StatementKind::Instruction("addi".to_string(), vec![Operand::Register(rd_reg), Operand::Register(rd_reg), Operand::Modifier(ModifierKind::Lo, symbol.clone())]),
+                    kind: StatementKind::Instruction("addi".to_string(), vec![Operand::Register(rd_reg), Operand::Register(rd_reg), Operand::Modifier(ModifierKind::Lo, symbol)]),
                     line,
                 }
             ])
@@ -52,16 +55,22 @@ fn expand_statement(statement: Statement) -> Result<Vec<Statement>, String> {
             }
             // auipc rd, symbol[31:12]
             // l{b|h|w} rd, symbol[11:0](rd)
-            let rd = &ops[0];
-            let symbol = &ops[1];
             // if second operand is a Label, we consider it a pseudo-instruction and expand it.
             // Otherwise, we consider it a base instruction and return it as is.
+            if !matches!(ops[1], Operand::Label(_)) {
+                return Ok(vec![Statement { kind: StatementKind::Instruction(name, ops), line }]);
+            }
+
+            let mut ops_iter = ops.into_iter();
+            let rd = ops_iter.next().unwrap();
+            let symbol = ops_iter.next().unwrap();
+
             let symbol = match symbol {
-                Operand::Label(label) => label.clone(),
-                _ => return Ok(vec![Statement { kind: StatementKind::Instruction(name, ops), line }])
+                Operand::Label(label) => label,
+                _ => unreachable!(),
             };
             let rd_reg = match rd {
-                Operand::Register(n) => *n,
+                Operand::Register(n) => n,
                 _ => return Err(format!("Invalid first operand for '{}' pseudo-instruction. Expected a register, got {}", name, rd)),
             };
             Ok(vec![
@@ -73,7 +82,7 @@ fn expand_statement(statement: Statement) -> Result<Vec<Statement>, String> {
                     line,
                 },
                 Statement {
-                    kind: StatementKind::Instruction(name.to_string(), vec![Operand::Register(rd_reg), Operand::Memory { offset: MemoryOffset::Modifier(ModifierKind::Lo, symbol.clone()), reg: rd_reg }]),
+                    kind: StatementKind::Instruction(name.to_string(), vec![Operand::Register(rd_reg), Operand::Memory { offset: MemoryOffset::Modifier(ModifierKind::Lo, symbol), reg: rd_reg }]),
                     line,
                 }
             ])
@@ -86,19 +95,25 @@ fn expand_statement(statement: Statement) -> Result<Vec<Statement>, String> {
             // Pseudo-instruction: s{b|h|w} rd, symbol, rt
             // Base instructions:  auipc rt, symbol[31:12]
             //                     s{b|h|w} rd, symbol[11:0](rt)
-            let rd = &ops[0];
-            let symbol = &ops[1];
-            let rt = &ops[2];
+            if !matches!(ops[1], Operand::Label(_)) {
+                return Ok(vec![Statement { kind: StatementKind::Instruction(name, ops), line }]);
+            }
+
+            let mut ops_iter = ops.into_iter();
+            let rd = ops_iter.next().unwrap();
+            let symbol = ops_iter.next().unwrap();
+            let rt = ops_iter.next().unwrap();
+
             let rd_reg = match rd {
-                Operand::Register(n) => *n,
+                Operand::Register(n) => n,
                 _ => return Err(format!("Invalid first operand for '{}' pseudo-instruction. Expected a register, got {}", name, rd)),
             };
             let symbol = match symbol {
-                Operand::Label(label) => label.clone(),
-                _ => return Err(format!("Invalid second operand for '{}' pseudo-instruction. Expected a label, got {}", name, symbol)),
+                Operand::Label(label) => label,
+                _ => unreachable!(),
             };
             let rt_reg = match rt {
-                Operand::Register(n) => *n,
+                Operand::Register(n) => n,
                 _ => return Err(format!("Invalid third operand for '{}' pseudo-instruction. Expected a register, got {}", name, rt)),
             };
             Ok(vec![
@@ -112,7 +127,7 @@ fn expand_statement(statement: Statement) -> Result<Vec<Statement>, String> {
                 Statement {
                     kind: StatementKind::Instruction(name.to_string(), vec![
                         Operand::Register(rd_reg),
-                        Operand::Memory { offset: MemoryOffset::Modifier(ModifierKind::Lo, symbol.clone()), reg: rt_reg }
+                        Operand::Memory { offset: MemoryOffset::Modifier(ModifierKind::Lo, symbol), reg: rt_reg }
                     ]),
                     line,
                 }
@@ -126,37 +141,38 @@ fn expand_statement(statement: Statement) -> Result<Vec<Statement>, String> {
                 return Err(format!("Invalid number of operands for 'li' pseudo-instruction. Expected 2, got {}", ops.len()));
             }
 
-               let rd = &ops[0];
-               let imm_op = &ops[1];
-               let rd_reg = match rd {
-                   Operand::Register(n) => *n,
-                   _ => return Err(format!("Invalid first operand for 'li' pseudo-instruction. Expected a register, got {}", rd)),
-               };
-               let imm = match imm_op {
-                   Operand::Immediate(n) => *n,
-                   _ => return Err(format!("Invalid second operand for 'li' pseudo-instruction. Expected an immediate, got {}", imm_op)),
-               };
+            let mut ops_iter = ops.into_iter();
+            let rd = ops_iter.next().unwrap();
+            let imm_op = ops_iter.next().unwrap();
 
-               if (-2048..=2047).contains(&imm) {
-                   Ok(vec![Statement {
-                       kind: StatementKind::Instruction("addi".to_string(), vec![Operand::Register(rd_reg), Operand::Register(0), Operand::Immediate(imm)]),
-                       line,
-                   }])
-               } else {
-                   let hi20 = (imm + 0x800) >> 12;
-                   let lo12 = (imm << 20) >> 20;
-                   Ok(vec![
-                       Statement {
-                           kind: StatementKind::Instruction("lui".to_string(), vec![Operand::Register(rd_reg), Operand::Immediate(hi20)]),
-                           line,
-                       },
-                       Statement {
-                           kind: StatementKind::Instruction("addi".to_string(), vec![Operand::Register(rd_reg), Operand::Register(rd_reg), Operand::Immediate(lo12)]),
-                           line,
-                       }
-                   ])
-               }
+            let rd_reg = match rd {
+                Operand::Register(n) => n,
+                _ => return Err(format!("Invalid first operand for 'li' pseudo-instruction. Expected a register, got {}", rd)),
+            };
+            let imm = match imm_op {
+                Operand::Immediate(n) => n,
+                _ => return Err(format!("Invalid second operand for 'li' pseudo-instruction. Expected an immediate, got {}", imm_op)),
+            };
 
+            if (-2048..=2047).contains(&imm) {
+                Ok(vec![Statement {
+                    kind: StatementKind::Instruction("addi".to_string(), vec![Operand::Register(rd_reg), Operand::Register(0), Operand::Immediate(imm)]),
+                    line,
+                }])
+            } else {
+                let hi20 = (imm + 0x800) >> 12;
+                let lo12 = (imm << 20) >> 20;
+                Ok(vec![
+                    Statement {
+                        kind: StatementKind::Instruction("lui".to_string(), vec![Operand::Register(rd_reg), Operand::Immediate(hi20)]),
+                        line,
+                    },
+                    Statement {
+                        kind: StatementKind::Instruction("addi".to_string(), vec![Operand::Register(rd_reg), Operand::Register(rd_reg), Operand::Immediate(lo12)]),
+                        line,
+                    }
+                ])
+            }
         }
         "mv" => {
             expand_2reg_to_3op(&name, ops, "addi", line, |rd, rs| {
@@ -417,6 +433,27 @@ mod tests {
     }
 
     #[test]
+    fn test_expand_lb_base_instruction() {
+        // lb a0, 4(sp) — base instruction, should pass through unchanged
+        let statement = Statement {
+            kind: StatementKind::Instruction("lb".to_string(), vec![
+                Operand::Register(10),
+                Operand::Memory { offset: MemoryOffset::Immediate(4), reg: 2 }
+            ]),
+            line: 1,
+        };
+        let expanded = expand_statement(statement).unwrap();
+        assert_eq!(expanded.len(), 1);
+        assert_eq!(expanded[0].kind, StatementKind::Instruction(
+            "lb".to_string(),
+            vec![
+                Operand::Register(10),
+                Operand::Memory { offset: MemoryOffset::Immediate(4), reg: 2 }
+            ]
+        ));
+    }
+
+    #[test]
     fn test_expand_lb() {
         let statement = Statement {
             kind: StatementKind::Instruction("lb".to_string(), vec![Operand::Register(3), Operand::Label("label".to_string())]),
@@ -429,6 +466,19 @@ mod tests {
     }
 
     #[test]
+    fn test_expand_lb_invalid_first_operand() {
+        // second operand is a label (pseudo form) but first is not a register
+        let statement = Statement {
+            kind: StatementKind::Instruction("lb".to_string(), vec![
+                Operand::Immediate(1),
+                Operand::Label("label".to_string())
+            ]),
+            line: 1,
+        };
+        assert!(expand_statement(statement).is_err());
+    }
+
+    #[test]
     fn test_expand_sb() {
         let statement = Statement {
             kind: StatementKind::Instruction("sb".to_string(), vec![Operand::Register(3), Operand::Label("label".to_string()), Operand::Register(4)]),
@@ -436,96 +486,24 @@ mod tests {
         };
         let expanded = expand_statement(statement).unwrap();
         assert_eq!(expanded.len(), 2);
-        assert_eq!(expanded[0].kind, StatementKind::Instruction("auipc".to_string(), vec![Operand::Register(4), Operand::Modifier(ModifierKind::Hi, "label".to_string())]));
-        assert_eq!(expanded[1].kind, StatementKind::Instruction("sb".to_string(), vec![Operand::Register(3), Operand::Memory { offset: MemoryOffset::Modifier(ModifierKind::Lo, "label".to_string()), reg: 4 }]));
+        assert_eq!(expanded[0].kind, StatementKind::Instruction("auipc".to_string(), vec![
+            Operand::Register(4), Operand::Modifier(ModifierKind::Hi, "label".to_string())]));
+        assert_eq!(expanded[1].kind, StatementKind::Instruction("sb".to_string(), vec![
+            Operand::Register(3), Operand::Memory { offset: MemoryOffset::Modifier(ModifierKind::Lo, "label".to_string()), reg: 4 }]));
     }
 
     #[test]
-    fn test_expand_sb_if_its_base_instruction() {
-        // sb is a base instruction, so it should not be expanded if the operands are correct
-        // example: sb x1, 0(x2)
+    fn test_expand_sb_base_instruction() {
+        // sb x1, 0(x2) - base instruction, should pass through unchanged
         let statement = Statement {
-            kind: StatementKind::Instruction("sb".to_string(), vec![Operand::Register(3), Operand::Memory { offset: MemoryOffset::Immediate(0), reg: 2 }]),
+            kind: StatementKind::Instruction("sb".to_string(), vec![
+                Operand::Register(3), Operand::Memory { offset: MemoryOffset::Immediate(0), reg: 2 }]),
             line: 1,
         };
         let expanded = expand_statement(statement).unwrap();
         assert_eq!(expanded.len(), 1);
-        assert_eq!(expanded[0].kind, StatementKind::Instruction("sb".to_string(), vec![Operand::Register(3), Operand::Memory { offset: MemoryOffset::Immediate(0), reg: 2 }]));
-    }
-
-    #[test]
-    fn test_expand_j() {
-        let statement = Statement {
-            kind: StatementKind::Instruction("j".to_string(), vec![Operand::Immediate(10)]),
-            line: 1,
-        };
-        let expanded = expand_statement(statement).unwrap();
-        assert_eq!(expanded.len(), 1);
-        assert_eq!(expanded[0].kind, StatementKind::Instruction("jal".to_string(), vec![Operand::Register(0), Operand::Immediate(10)]));
-    }
-
-    #[test]
-    fn test_expand_jal() {
-        let statement = Statement {
-            kind: StatementKind::Instruction("jal".to_string(), vec![Operand::Label("loop".to_string())]),
-            line: 1,
-        };
-        let expanded = expand_statement(statement).unwrap();
-        assert_eq!(expanded.len(), 1);
-        assert_eq!(expanded[0].kind, StatementKind::Instruction(
-            "jal".to_string(),
-            vec![Operand::Register(1), Operand::Label("loop".to_string())]
-        ));
-    }
-
-    #[test]
-    fn test_expand_jalr() {
-        let statement = Statement {
-            kind: StatementKind::Instruction("jalr".to_string(), vec![Operand::Register(9)]),
-            line: 1,
-        };
-        let expanded = expand_statement(statement).unwrap();
-        assert_eq!(expanded.len(), 1);
-        assert_eq!(expanded[0].kind, StatementKind::Instruction(
-            "jalr".to_string(),
-            vec![Operand::Register(1), Operand::Register(9), Operand::Immediate(0)]
-        ));
-    }
-
-    #[test]
-    fn test_expand_call() {
-        let statement = Statement {
-            kind: StatementKind::Instruction("call".to_string(), vec![Operand::Label("loop".to_string())]),
-            line: 1,
-        };
-        let expanded = expand_statement(statement).unwrap();
-        assert_eq!(expanded.len(), 2);
-        assert_eq!(expanded[0].kind, StatementKind::Instruction(
-            "auipc".to_string(),
-            vec![Operand::Register(1), Operand::Modifier(ModifierKind::Hi, "loop".to_string())]
-        ));
-        assert_eq!(expanded[1].kind, StatementKind::Instruction(
-            "jalr".to_string(),
-            vec![Operand::Register(1), Operand::Register(1), Operand::Modifier(ModifierKind::Lo, "loop".to_string())]
-        ));
-    }
-
-    #[test]
-    fn test_expand_tail() {
-        let statement = Statement {
-            kind: StatementKind::Instruction("tail".to_string(), vec![Operand::Label("loop".to_string())]),
-            line: 1,
-        };
-        let expanded = expand_statement(statement).unwrap();
-        assert_eq!(expanded.len(), 2);
-        assert_eq!(expanded[0].kind, StatementKind::Instruction(
-            "auipc".to_string(),
-            vec![Operand::Register(6), Operand::Modifier(ModifierKind::Hi, "loop".to_string())]
-        ));
-        assert_eq!(expanded[1].kind, StatementKind::Instruction(
-            "jalr".to_string(),
-            vec![Operand::Register(0), Operand::Register(6), Operand::Modifier(ModifierKind::Lo, "loop".to_string())]
-        ));
+        assert_eq!(expanded[0].kind, StatementKind::Instruction("sb".to_string(), vec![
+            Operand::Register(3), Operand::Memory { offset: MemoryOffset::Immediate(0), reg: 2 }]));
     }
 
     #[test]
@@ -550,8 +528,10 @@ mod tests {
         assert_eq!(expanded.len(), 2);
         // hi20 = (0x12345678 + 0x800) >> 12 = 0x12345
         // lo12 = (0x12345678 << 20) >> 20 = 0x678
-        assert_eq!(expanded[0].kind, StatementKind::Instruction("lui".to_string(), vec![Operand::Register(1), Operand::Immediate(0x12345)]));
-        assert_eq!(expanded[1].kind, StatementKind::Instruction("addi".to_string(), vec![Operand::Register(1), Operand::Register(1), Operand::Immediate(0x678)]));
+        assert_eq!(expanded[0].kind, StatementKind::Instruction("lui".to_string(), vec![
+            Operand::Register(1), Operand::Immediate(0x12345)]));
+        assert_eq!(expanded[1].kind, StatementKind::Instruction("addi".to_string(), vec![
+            Operand::Register(1), Operand::Register(1), Operand::Immediate(0x678)]));
     }
 
     #[test]
@@ -589,6 +569,42 @@ mod tests {
         );
     }
 
+        #[test]
+    fn test_expand_call() {
+        let statement = Statement {
+            kind: StatementKind::Instruction("call".to_string(), vec![Operand::Label("loop".to_string())]),
+            line: 1,
+        };
+        let expanded = expand_statement(statement).unwrap();
+        assert_eq!(expanded.len(), 2);
+        assert_eq!(expanded[0].kind, StatementKind::Instruction(
+            "auipc".to_string(),
+            vec![Operand::Register(1), Operand::Modifier(ModifierKind::Hi, "loop".to_string())]
+        ));
+        assert_eq!(expanded[1].kind, StatementKind::Instruction(
+            "jalr".to_string(),
+            vec![Operand::Register(1), Operand::Register(1), Operand::Modifier(ModifierKind::Lo, "loop".to_string())]
+        ));
+    }
+
+    #[test]
+    fn test_expand_tail() {
+        let statement = Statement {
+            kind: StatementKind::Instruction("tail".to_string(), vec![Operand::Label("loop".to_string())]),
+            line: 1,
+        };
+        let expanded = expand_statement(statement).unwrap();
+        assert_eq!(expanded.len(), 2);
+        assert_eq!(expanded[0].kind, StatementKind::Instruction(
+            "auipc".to_string(),
+            vec![Operand::Register(6), Operand::Modifier(ModifierKind::Hi, "loop".to_string())]
+        ));
+        assert_eq!(expanded[1].kind, StatementKind::Instruction(
+            "jalr".to_string(),
+            vec![Operand::Register(0), Operand::Register(6), Operand::Modifier(ModifierKind::Lo, "loop".to_string())]
+        ));
+    }
+
     #[test]
     fn test_expand_basic_pseudo_instructions() {
         let test_cases = vec![
@@ -600,6 +616,12 @@ mod tests {
             ("snez", vec![Operand::Register(11), Operand::Register(12)], "sltu", vec![Operand::Register(11), Operand::Register(0), Operand::Register(12)]),
             ("sltz", vec![Operand::Register(11), Operand::Register(12)], "slti", vec![Operand::Register(11), Operand::Register(12), Operand::Immediate(0)]),
             ("sgtz", vec![Operand::Register(11), Operand::Register(12)], "slt", vec![Operand::Register(11), Operand::Register(0), Operand::Register(12)]),
+            ("j", vec![Operand::Immediate(10)], "jal", vec![Operand::Register(0), Operand::Immediate(10)]),
+            ("j", vec![Operand::Label("label".to_string())], "jal", vec![Operand::Register(0), Operand::Label("label".to_string())]),
+            ("jal", vec![Operand::Label("label".to_string())], "jal", vec![Operand::Register(1), Operand::Label("label".to_string())]),
+            ("jr", vec![Operand::Register(1)], "jalr", vec![Operand::Register(0), Operand::Register(1), Operand::Immediate(0)]),
+            ("jalr", vec![Operand::Register(11)], "jalr", vec![Operand::Register(1), Operand::Register(11), Operand::Immediate(0)]),
+            ("ret", vec![], "jalr", vec![Operand::Register(0), Operand::Register(1), Operand::Immediate(0)]),
         ];
 
         for (name, ops, expected_name, expected_ops) in test_cases {
