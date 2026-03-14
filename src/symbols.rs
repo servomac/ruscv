@@ -38,11 +38,15 @@ impl SymbolTable {
                     self.add_label(name.clone(), address)?;
                 }
 
-                StatementKind::Instruction(_, _) => {
+                StatementKind::Instruction(name, ops) => {
                     if current_section == ".text" {
-                        text_offset += 4;
+                        if Self::is_pseudo_instruction_expanding_to_two_instructions(name, ops) {
+                            text_offset += 8;
+                        } else {
+                            text_offset += 4;
+                        }
                     } else {
-                        // Opcional: Error si hay instrucciones en sección de datos
+                        // Error it there is instructions in the data section
                         return Err("Error: Instruction found on .data section".to_string());
                     }
                 }
@@ -65,6 +69,16 @@ impl SymbolTable {
             }
         }
         Ok(())
+    }
+
+    // TODO really symbol table is called after the pseudo-instruction expansion,
+    // so this function is not needed, isn't it? VALIDATE THIS
+    fn is_pseudo_instruction_expanding_to_two_instructions(name: &str, ops: &[Operand]) -> bool {
+        //for l{b|h|w} and s{b|h|w} if the operands are two, it is a pseudo-instruction
+        if matches!(name, "lb" | "lh" | "lw" | "sb" | "sh" | "sw") {
+            return ops.len() == 2;
+        }
+        matches!(name, "la" | "call" | "tail")
     }
 
     // Size in bytes that the directive will occupy in memory

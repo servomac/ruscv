@@ -2,6 +2,7 @@ use crate::processor::Processor;
 use crate::config;
 use crate::lexer;
 use crate::parser;
+use crate::pseudo;
 use crate::symbols;
 use crate::assembler;
 
@@ -124,6 +125,8 @@ fn compile_and_load(app: &mut App) -> Result<(), String> {
         Ok(stmt) => stmt,
         Err(e) => return Err(format!("Line {}: {}", e.line, e)),
     };
+
+    let statements = pseudo::expand(statements).map_err(|e| format!("Pseudo-instruction error: {}", e))?;
 
     let mut symbol_table = symbols::SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
     symbol_table.build(&statements).map_err(|e| format!("Symbol error: {}", e))?;

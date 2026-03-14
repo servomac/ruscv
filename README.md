@@ -14,9 +14,10 @@ A RISC-V Assembler and Emulator implementation in Rust.
   - Control Flow (Branches, `JAL`, `JALR`).
   - Upper Immediate instructions (`LUI`, `AUIPC`).
 - **Assembler**: Supports basic assembly syntax, labels, and a variety of directives for memory allocation and section management:
-  - **Sections**: `.text`, `.data`.
-  - **Data**: `.byte`, `.half`, `.word`, `.ascii`, `.asciz`, `.string`, `.space`.
-  - **Alignment**: `.align`.
+  - **Sections**: `.text`, `.data`
+  - **Data**: `.byte`, `.half`, `.word`, `.ascii`, `.asciz`, `.string`, `.space`
+  - **Alignment**: `.align`
+  - **Modifiers**: `%hi(symbol)`, `%lo(symbol)`
 - **Comprehensive Error Handling**: The assembler identifies and reports multiple errors across the source file instead of failing at the first encountered issue.
 - **Unit Tested**: Extensively verified with a suite of unit tests for instruction encoding, decoding, and execution state transitions.
 

@@ -38,7 +38,7 @@ impl fmt::Display for MemoryOffset {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Operand {
     Register(u8),
     Immediate(i32),
@@ -67,13 +67,13 @@ impl fmt::Display for Operand {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Statement {
     pub kind: StatementKind,
     pub line: usize,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum StatementKind {
     Instruction(String, Vec<Operand>),
     Label(String),

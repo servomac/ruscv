@@ -476,11 +476,17 @@ fn classify_identifier(ident: &str, line: usize, column: usize) -> Result<Token,
 }
 
 fn is_instruction(ident: &str) -> bool {
-    matches!(ident, "add" | "sub" | "and" | "or" | "xor" | "sll" | "srl" | "sra" | "slt" | "sltu" |
+    matches!(ident,
+        "add" | "sub" | "and" | "or" | "xor" | "sll" | "srl" | "sra" | "slt" | "sltu" |
         "addi" | "andi" | "ori" | "xori" | "slli" | "srli" | "srai" | "slti" | "sltiu" |
         "lw" | "sw" | "lb" | "lh" | "lbu" | "lhu" | "sb" | "sh" |
         "beq" | "bne" | "blt" | "bge" | "bltu" | "bgeu" |
-        "jal" | "jalr" | "lui" | "auipc" | "ecall" | "ebreak")
+        "jal" | "jalr" | "lui" | "auipc" | "ecall" | "ebreak" |
+        // Pseudoinstructions
+        "la" | "nop" | "li" | "mv" | "not" | "neg" | "seqz" | "snez" | "sltz" | "sgtz" |
+        "beqz" | "bnez" | "blez" | "bgez" | "bltz" | "bgtz" | "bgt" | "ble" | "bgtu" | "bleu" |
+        "j" | "jr" | "ret" |  "call" | "tail"
+    )
 }
 
 fn abi_to_register(ident: &str) -> Option<u8> {
