@@ -18,153 +18,152 @@ fn expand_statement(statement: Statement) -> Result<Vec<Statement>, String> {
     let StatementKind::Instruction(name, ops) = statement.kind else { return Ok(vec![statement]) };
 
     match name.as_str() {
-                "j" => {
-                    if ops.len() == 1 {
-                        let offset = ops.into_iter().next().unwrap();
-                        // TODO validate is a valid offset? if not, the assembler will fail later and reference an instruction jal with an invalid offset
-                        Ok(vec![Statement {
-                            kind: StatementKind::Instruction("jal".to_string(), vec![Operand::Register(0), offset]),
-                            line,
-                        }])
-                    } else {
-                        // TODO make the error message more similar to those in the assembler.rs i.e. "Invalid operands for J-type instruction"
-                        Err(format!("Invalid number of operands for 'j' pseudo-instruction. Expected 1, got {}", ops.len()))
-                    }
-                }
-                "jal" => {
-                    if ops.len() == 1 {
-                        let offset = ops.into_iter().next().unwrap();
-                        // TODO validate is a valid offset? if not, the assembler will fail later and reference an instruction jal already expanded
-                        Ok(vec![Statement {
-                            kind: StatementKind::Instruction("jal".to_string(), vec![Operand::Register(1), offset]),
-                            line,
-                        }])
-                    } else {
-                        Ok(vec![Statement { kind: StatementKind::Instruction(name, ops), line }])
-                    }
-                }
-                "jr" => {
-                    if ops.len() == 1 {
-                        let rs = ops.into_iter().next().unwrap();
-                        let rs_reg = match rs {
-                            Operand::Register(n) => n,
-                            _ => return Err(format!("Invalid operand for 'jr' pseudo-instruction. Expected a register, got {}", rs)),
-                        };
-                        Ok(vec![Statement {
-                            kind: StatementKind::Instruction("jalr".to_string(), vec![
-                                Operand::Register(0), Operand::Register(rs_reg), Operand::Immediate(0)
-                            ]),
-                            line,
-                        }])
-                    } else {
-                        Err(format!("Invalid number of operands for 'jr' pseudo-instruction. Expected 1, got {}", ops.len()))
-                    }
-                }
-                "jalr" => {
-                    if ops.len() == 1 {
-                        let rs = ops.into_iter().next().unwrap();
-                        let rs_reg = match rs {
-                            Operand::Register(n) => n,
-                            _ => return Err(format!("Invalid operand for 'jalr' pseudo-instruction. Expected a register, got {}", rs)),
-                        };
-                        Ok(vec![Statement {
-                            kind: StatementKind::Instruction("jalr".to_string(), vec![
-                                Operand::Register(1), Operand::Register(rs_reg), Operand::Immediate(0)
-                            ]),
-                            line,
-                        }])
-                    } else {
-                        Ok(vec![Statement { kind: StatementKind::Instruction(name, ops), line }])
-                    }
-                }
-                "ret" => {
-                    if ops.len() == 0 {
-                        Ok(vec![Statement {
-                            kind: StatementKind::Instruction("jalr".to_string(), vec![
-                                Operand::Register(0),
-                                Operand::Register(1),
-                                Operand::Immediate(0)
-                            ]),
-                            line,
-                        }])
-                    } else {
-                        Err(format!("Invalid number of operands for 'ret' pseudo-instruction. Expected 0, got {}", ops.len()))
-                    }
-                }
-                "call" => {
-                    if ops.len() == 1 {
-                        let offset = ops.into_iter().next().unwrap();
-                        // Validate offset is an Immediate or Label
-                        let (offset_high, offset_low) = match offset {
-                            Operand::Immediate(imm) => (
-                                Operand::Immediate((imm + 0x800) >> 12),
-                                Operand::Immediate((imm << 20) >> 20),
-                            ),
-                            Operand::Label(label) => (
-                                Operand::Modifier(ModifierKind::Hi, label.clone()),
-                                Operand::Modifier(ModifierKind::Lo, label)
-                            ),
-                            _ => return Err(format!("Invalid operand for 'call' pseudo-instruction. Expected an immediate or label, got {}", offset)),
-                        };
-                        Ok(vec![Statement {
-                            kind: StatementKind::Instruction("auipc".to_string(), vec![
-                                Operand::Register(1),
-                                offset_high,
-                            ]),
-                            line,
-                        },
-                            Statement {
-                            kind: StatementKind::Instruction("jalr".to_string(), vec![
-                                Operand::Register(1),
-                                Operand::Register(1),
-                                offset_low,
-                            ]),
-                            line,
-                        }])
-                    } else {
-                        Err(format!("Invalid number of operands for 'call' pseudo-instruction. Expected 1, got {}", ops.len()))
-                    }
-                }
-                "tail" => {
-                    if ops.len() == 1 {
-                        let offset = ops.into_iter().next().unwrap();
-                        // Validate offset is an Immediate or Label
-                        let (offset_high, offset_low) = match offset {
-                            Operand::Immediate(imm) => (
-                                Operand::Immediate((imm + 0x800) >> 12),
-                                Operand::Immediate((imm << 20) >> 20),
-                            ),
-                            Operand::Label(label) => (
-                                Operand::Modifier(ModifierKind::Hi, label.clone()),
-                                Operand::Modifier(ModifierKind::Lo, label)
-                            ),
-                            _ => return Err(format!("Invalid operand for 'tail' pseudo-instruction. Expected an immediate or label, got {}", offset)),
-                        };
-                        Ok(vec![Statement {
-                            kind: StatementKind::Instruction("auipc".to_string(), vec![
-                                Operand::Register(6),
-                                offset_high,
-                            ]),
-                            line,
-                        },
-                            Statement {
-                            kind: StatementKind::Instruction("jalr".to_string(), vec![
-                                Operand::Register(0),
-                                Operand::Register(6),
-                                offset_low,
-                            ]),
-                            line,
-                        }])
-                    } else {
-                        Err(format!("Invalid number of operands for 'tail' pseudo-instruction. Expected 1, got {}", ops.len()))
-                    }
-                }
-                _ => Ok(vec![Statement { kind: StatementKind::Instruction(name, ops), line }]),
+        "j" => {
+            if ops.len() == 1 {
+                let offset = ops.into_iter().next().unwrap();
+                // TODO validate is a valid offset? if not, the assembler will fail later and reference an instruction jal with an invalid offset
+                Ok(vec![Statement {
+                    kind: StatementKind::Instruction("jal".to_string(), vec![Operand::Register(0), offset]),
+                    line,
+                }])
+            } else {
+                // TODO make the error message more similar to those in the assembler.rs i.e. "Invalid operands for J-type instruction"
+                Err(format!("Invalid number of operands for 'j' pseudo-instruction. Expected 1, got {}", ops.len()))
             }
+        }
+        "jal" => {
+            if ops.len() == 1 {
+                let offset = ops.into_iter().next().unwrap();
+                // TODO validate is a valid offset? if not, the assembler will fail later and reference an instruction jal already expanded
+                Ok(vec![Statement {
+                    kind: StatementKind::Instruction("jal".to_string(), vec![Operand::Register(1), offset]),
+                    line,
+                }])
+            } else {
+                Ok(vec![Statement { kind: StatementKind::Instruction(name, ops), line }])
+            }
+        }
+        "jr" => {
+            if ops.len() == 1 {
+                let rs = ops.into_iter().next().unwrap();
+                let rs_reg = match rs {
+                    Operand::Register(n) => n,
+                    _ => return Err(format!("Invalid operand for 'jr' pseudo-instruction. Expected a register, got {}", rs)),
+                };
+                Ok(vec![Statement {
+                    kind: StatementKind::Instruction("jalr".to_string(), vec![
+                        Operand::Register(0), Operand::Register(rs_reg), Operand::Immediate(0)
+                    ]),
+                    line,
+                }])
+            } else {
+                Err(format!("Invalid number of operands for 'jr' pseudo-instruction. Expected 1, got {}", ops.len()))
+            }
+        }
+        "jalr" => {
+            if ops.len() == 1 {
+                let rs = ops.into_iter().next().unwrap();
+                let rs_reg = match rs {
+                    Operand::Register(n) => n,
+                    _ => return Err(format!("Invalid operand for 'jalr' pseudo-instruction. Expected a register, got {}", rs)),
+                };
+                Ok(vec![Statement {
+                    kind: StatementKind::Instruction("jalr".to_string(), vec![
+                        Operand::Register(1), Operand::Register(rs_reg), Operand::Immediate(0)
+                    ]),
+                    line,
+                }])
+            } else {
+                Ok(vec![Statement { kind: StatementKind::Instruction(name, ops), line }])
+            }
+        }
+        "ret" => {
+            if ops.len() == 0 {
+                Ok(vec![Statement {
+                    kind: StatementKind::Instruction("jalr".to_string(), vec![
+                        Operand::Register(0),
+                        Operand::Register(1),
+                        Operand::Immediate(0)
+                    ]),
+                    line,
+                }])
+            } else {
+                Err(format!("Invalid number of operands for 'ret' pseudo-instruction. Expected 0, got {}", ops.len()))
+            }
+        }
+        "call" => {
+            if ops.len() == 1 {
+                let offset = ops.into_iter().next().unwrap();
+                // Validate offset is an Immediate or Label
+                let (offset_high, offset_low) = match offset {
+                    Operand::Immediate(imm) => (
+                        Operand::Immediate((imm + 0x800) >> 12),
+                        Operand::Immediate((imm << 20) >> 20),
+                    ),
+                    Operand::Label(label) => (
+                        Operand::Modifier(ModifierKind::Hi, label.clone()),
+                        Operand::Modifier(ModifierKind::Lo, label)
+                    ),
+                    _ => return Err(format!("Invalid operand for 'call' pseudo-instruction. Expected an immediate or label, got {}", offset)),
+                };
+                Ok(vec![Statement {
+                    kind: StatementKind::Instruction("auipc".to_string(), vec![
+                        Operand::Register(1),
+                        offset_high,
+                    ]),
+                    line,
+                },
+                    Statement {
+                    kind: StatementKind::Instruction("jalr".to_string(), vec![
+                        Operand::Register(1),
+                        Operand::Register(1),
+                        offset_low,
+                    ]),
+                    line,
+                }])
+            } else {
+                Err(format!("Invalid number of operands for 'call' pseudo-instruction. Expected 1, got {}", ops.len()))
+            }
+        }
+        "tail" => {
+            if ops.len() == 1 {
+                let offset = ops.into_iter().next().unwrap();
+                // Validate offset is an Immediate or Label
+                let (offset_high, offset_low) = match offset {
+                    Operand::Immediate(imm) => (
+                        Operand::Immediate((imm + 0x800) >> 12),
+                        Operand::Immediate((imm << 20) >> 20),
+                    ),
+                    Operand::Label(label) => (
+                        Operand::Modifier(ModifierKind::Hi, label.clone()),
+                        Operand::Modifier(ModifierKind::Lo, label)
+                    ),
+                    _ => return Err(format!("Invalid operand for 'tail' pseudo-instruction. Expected an immediate or label, got {}", offset)),
+                };
+                Ok(vec![Statement {
+                    kind: StatementKind::Instruction("auipc".to_string(), vec![
+                        Operand::Register(6),
+                        offset_high,
+                    ]),
+                    line,
+                },
+                    Statement {
+                    kind: StatementKind::Instruction("jalr".to_string(), vec![
+                        Operand::Register(0),
+                        Operand::Register(6),
+                        offset_low,
+                    ]),
+                    line,
+                }])
+            } else {
+                Err(format!("Invalid number of operands for 'tail' pseudo-instruction. Expected 1, got {}", ops.len()))
+            }
+        }
+        _ => Ok(vec![Statement { kind: StatementKind::Instruction(name, ops), line }]),
+    }
 }
 
 
-// TODO Tests
 #[cfg(test)]
 mod tests {
     use super::*;
