@@ -1,5 +1,7 @@
 # ruscv
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/servomac/ruscv)
+
 A RISC-V Assembler and Emulator implementation in Rust.
 
 `ruscv` is a project aimed at providing a modular and extensible platform for assembling RISC-V assembly code and emulating its execution on an RV32I-compatible virtual processor.

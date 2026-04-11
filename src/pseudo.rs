@@ -614,31 +614,52 @@ mod tests {
     }
 
     #[test]
-    fn test_expand_li_small() {
-        let statement = Statement {
-            kind: StatementKind::Instruction("li".to_string(), vec![Operand::Register(1), Operand::Immediate(100)]),
+    fn test_expand_li_boundary() {
+        // 2047 is last value fitting in 12-bit signed => single addi
+        let expanded = expand_statement(Statement {
+            kind: StatementKind::Instruction("li".to_string(), vec![
+                Operand::Register(1), Operand::Immediate(2047)
+            ]),
             line: 1,
-        };
-        let expanded = expand_statement(statement).unwrap();
+        }).unwrap();
         assert_eq!(expanded.len(), 1);
         assert_eq!(expanded[0].kind, StatementKind::Instruction("addi".to_string(), vec![
-            Operand::Register(1), Operand::Register(0), Operand::Immediate(100)]));
-    }
+            Operand::Register(1), Operand::Register(0), Operand::Immediate(2047)
+        ]));
 
-    #[test]
-    fn test_expand_li_large() {
-        let statement = Statement {
-            kind: StatementKind::Instruction("li".to_string(), vec![Operand::Register(1), Operand::Immediate(0x12345678)]),
+        // 2048 = 0x800 is first value outside range, bit 11 SET => two instructions
+        // hi = (0x800 + 0x800) >> 12 = 1,  lo = -2048
+        // sanity: (1 << 12) + (-2048) = 0x1000 - 0x800 = 0x800 = 2048
+        let expanded = expand_statement(Statement {
+            kind: StatementKind::Instruction("li".to_string(), vec![
+                Operand::Register(1), Operand::Immediate(2048)
+            ]),
             line: 1,
-        };
-        let expanded = expand_statement(statement).unwrap();
+        }).unwrap();
         assert_eq!(expanded.len(), 2);
-        // hi20 = (0x12345678 + 0x800) >> 12 = 0x12345
-        // lo12 = (0x12345678 << 20) >> 20 = 0x678
         assert_eq!(expanded[0].kind, StatementKind::Instruction("lui".to_string(), vec![
-            Operand::Register(1), Operand::Immediate(0x12345)]));
+            Operand::Register(1), Operand::Immediate(1)
+        ]));
         assert_eq!(expanded[1].kind, StatementKind::Instruction("addi".to_string(), vec![
-            Operand::Register(1), Operand::Register(1), Operand::Immediate(0x678)]));
+            Operand::Register(1), Operand::Register(1), Operand::Immediate(-2048)
+        ]));
+
+        // -2049 is first negative value outside range => two instructions
+        // lo = 0x7FF = 2047 (bit 11 clear, positive), hi = -1
+        // sanity: (-1 << 12) + 2047 = -4096 + 2047 = -2049
+        let expanded = expand_statement(Statement {
+            kind: StatementKind::Instruction("li".to_string(), vec![
+                Operand::Register(1), Operand::Immediate(-2049)
+            ]),
+            line: 1,
+        }).unwrap();
+        assert_eq!(expanded.len(), 2);
+        assert_eq!(expanded[0].kind, StatementKind::Instruction("lui".to_string(), vec![
+            Operand::Register(1), Operand::Immediate(-1)
+        ]));
+        assert_eq!(expanded[1].kind, StatementKind::Instruction("addi".to_string(), vec![
+            Operand::Register(1), Operand::Register(1), Operand::Immediate(2047)
+        ]));
     }
 
     #[test]
