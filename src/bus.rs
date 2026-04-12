@@ -19,7 +19,7 @@ pub trait Device: Send + Sync {
 }
 
 pub struct Bus {
-    pub regions: Vec<(u32, u32, Box<dyn Device>)>,
+    regions: Vec<(u32, u32, Box<dyn Device>)>,
 }
 
 impl Bus {
@@ -50,6 +50,19 @@ impl Bus {
             }
         }
         Err(MemoryFault::OutOfBounds { address: addr })
+    }
+
+    pub fn read_word(&self, addr: u32) -> Result<u32, MemoryFault> {
+        self.read(addr, AccessSize::Word)
+    }
+
+    pub fn remove_region(&mut self, base_addr: u32) {
+        self.regions.retain(|(base, _, _)| *base != base_addr);
+    }
+
+    pub fn replace_device(&mut self, base: u32, size: u32, device: Box<dyn Device>) {
+        self.remove_region(base);
+        self.add_device(base, size, device);
     }
 }
 

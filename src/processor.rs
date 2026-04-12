@@ -4,7 +4,7 @@ use crate::bus::{Bus, Ram, Rom, MmioDevice, AccessSize, MemoryFault};
 pub struct Processor {
     pc: u32,
     registers: [u32; crate::config::NUM_REGISTERS],
-    pub bus: Bus,
+    bus: Bus,
     // Store bases for convenience/test compatibility
     text_base: u32,
     data_base: u32,
@@ -117,20 +117,12 @@ impl Processor {
         }
     }
 
-    pub fn load(&mut self, text: &Vec<u8>, data: &Vec<u8>) {
-        // Since the Bus uses Box<dyn Device>, we need a way to update the Rom/Ram data.
-        // For now, we'll re-initialize the bus regions for text and data.
+    pub fn load(&mut self, text: &[u8], data: &[u8]) {
+        self.bus.replace_device(self.text_base, text.len() as u32, Box::new(Rom::new(text.to_vec())));
 
-        // Remove old regions for text/data if they exist
-        self.bus.regions.retain(|(base, _, _)| *base != self.text_base && *base != self.data_base);
-
-        // Add new Rom for text
-        self.bus.add_device(self.text_base, text.len() as u32, Box::new(Rom::new(text.clone())));
-
-        // Add new Ram for data
-        let mut ram_data = Ram::new(data.len());
-        ram_data.data = data.clone();
-        self.bus.add_device(self.data_base, data.len() as u32, Box::new(ram_data));
+        let mut ram = Ram::new(data.len());
+        ram.data.copy_from_slice(data);
+        self.bus.replace_device(self.data_base, data.len() as u32, Box::new(ram));
 
         self.pc = self.text_base;
     }
@@ -560,7 +552,7 @@ impl Processor {
     }
 
     pub fn read_memory_word(&self, address: u32) -> Result<u32, MemoryFault> {
-        self.bus.read(address, AccessSize::Word)
+        self.bus.read_word(address)
     }
 
     pub fn text_base(&self) -> u32 {
@@ -736,7 +728,7 @@ mod tests {
     fn test_step_pc_increment() {
         let mut processor = Processor::new(0x400000, 0, 0, 0);
         // add x3, x1, x2 (0x002081B3)
-        processor.load(&vec![0xB3, 0x81, 0x20, 0x00], &vec![]);
+        processor.load(&[0xB3, 0x81, 0x20, 0x00], &[]);
         processor.pc = 0x400000;
 
         processor.step().unwrap();
@@ -798,7 +790,7 @@ mod tests {
 
     fn processor_with_data(data: Vec<u8>) -> Processor {
         let mut p = Processor::new(0x0, 0x10000000, 0x7FFFFFFF, 1024);
-        p.load(&Vec::new(), &data);
+        p.load(&[], &data);
         p
     }
 
