@@ -1,95 +1,15 @@
-use crate::config;
+use crate::bus::{Bus, Ram, Rom, MmioDevice, AccessSize, MemoryFault};
 
-// TODO: this is not a good way to represent memory, it should be a
-// contiguous block of memory with different segments;
-// view the read_byte and write_byte methods to see how memory is accessed.
-struct Memory {
-    text: Vec<u8>,
-    data: Vec<u8>,
-    stack: Vec<u8>,
-    text_base: u32,
-    data_base: u32,
-    stack_base: u32,
-}
-
-#[derive(Debug, PartialEq)]
-pub enum MemoryFault {
-    OutOfBounds { address: u32 },
-    WriteToReadOnly { address: u32 },           // TODO
-    UnalignedAccess { address: u32 },           // TODO
-    ExecuteFromNonExecutable { address: u32 },  // TODO: check in fetch
-}
-
-impl Memory {
-    fn read_byte(&self, address: u32) -> Result<u8, MemoryFault> {
-        if address >= self.text_base && address < self.text_base + self.text.len() as u32 {
-            Ok(self.text[(address - self.text_base) as usize])
-        } else if address >= self.data_base && address < self.data_base + self.data.len() as u32 {
-            Ok(self.data[(address - self.data_base) as usize])
-        } else if address >= self.stack_base && address < self.stack_base + self.stack.len() as u32 {
-            Ok(self.stack[(address - self.stack_base) as usize])
-        } else {
-            Err(MemoryFault::OutOfBounds { address })
-        }
-    }
-
-    fn write_byte(&mut self, address: u32, value: u8) -> Result<(), MemoryFault> {
-        if address >= self.text_base && address < self.text_base + self.text.len() as u32 {
-            self.text[(address - self.text_base) as usize] = value;
-        } else if address >= self.data_base && address < self.data_base + self.data.len() as u32 {
-            self.data[(address - self.data_base) as usize] = value;
-        } else if address >= self.stack_base && address < self.stack_base + self.stack.len() as u32 {
-            self.stack[(address - self.stack_base) as usize] = value;
-        } else {
-            return Err(MemoryFault::OutOfBounds { address });
-        }
-        Ok(())
-    }
-
-    fn write_half(&mut self, address: u32, value: u16) -> Result<(), MemoryFault> {
-        let byte0 = value as u8;
-        let byte1 = (value >> 8) as u8;
-        self.write_byte(address, byte0)?;
-        self.write_byte(address + 1, byte1)?;
-        Ok(())
-    }
-
-    fn write_word(&mut self, address: u32, value: u32) -> Result<(), MemoryFault> {
-        let byte0 = value as u8;
-        let byte1 = (value >> 8) as u8;
-        let byte2 = (value >> 16) as u8;
-        let byte3 = (value >> 24) as u8;
-        self.write_byte(address, byte0)?;
-        self.write_byte(address + 1, byte1)?;
-        self.write_byte(address + 2, byte2)?;
-        self.write_byte(address + 3, byte3)?;
-        Ok(())
-    }
-
-    fn read_half(&self, address: u32) -> Result<u16, MemoryFault> {
-        let byte0 = self.read_byte(address)?;
-        let byte1 = self.read_byte(address + 1)?;
-        Ok((byte1 as u16) << 8 | (byte0 as u16))
-    }
-
-    fn read_word(&self, address: u32) -> Result<u32, MemoryFault> {
-        let byte0 = self.read_byte(address)?;
-        let byte1 = self.read_byte(address + 1)?;
-        let byte2 = self.read_byte(address + 2)?;
-        let byte3 = self.read_byte(address + 3)?;
-        Ok(
-            (byte3 as u32) << 24 |
-            (byte2 as u32) << 16 |
-            (byte1 as u32) << 8 |
-            (byte0 as u32)
-        )
-    }
-}
 
 pub struct Processor {
     pc: u32,
-    registers: [u32; config::NUM_REGISTERS],
-    memory: Memory,
+    registers: [u32; crate::config::NUM_REGISTERS],
+    pub bus: Bus,
+    // Store bases for convenience/test compatibility
+    text_base: u32,
+    data_base: u32,
+    stack_base: u32,
+    stack_size: usize,
 }
 
 #[derive(Debug, PartialEq)]
@@ -166,42 +86,62 @@ enum Instruction {
 
 impl Processor {
     pub fn new(text_base: u32, data_base: u32, stack_base: u32, stack_size: usize) -> Self {
-        let mut registers = [0; config::NUM_REGISTERS];
-        registers[2] = stack_base; // x2 is the architectural stack pointer (sp) in RISC-V
+        let mut registers = [0; crate::config::NUM_REGISTERS];
+        registers[2] = stack_base;
+
+        let mut bus = Bus::new();
+
+        // QEMU virt standard devices (placeholders)
+        bus.add_device(crate::config::CLINT_BASE, crate::config::CLINT_SIZE, Box::new(MmioDevice::new("CLINT")));
+        bus.add_device(crate::config::PLIC_BASE, crate::config::PLIC_SIZE, Box::new(MmioDevice::new("PLIC")));
+        bus.add_device(crate::config::UART_BASE, crate::config::UART_SIZE, Box::new(MmioDevice::new("UART")));
+
+        // Initial regions for backward compatibility with existing tests
+        // and current assembler/loader expectations.
+        // These will eventually be merged into a single DRAM device.
+        bus.add_device(text_base, crate::config::DEFAULT_SEGMENT_SIZE, Box::new(Rom::new(Vec::new()))); // Placeholder text
+        bus.add_device(data_base, crate::config::DEFAULT_SEGMENT_SIZE, Box::new(Ram::new(crate::config::DEFAULT_SEGMENT_SIZE as usize))); // Placeholder data
+
+        // Stack grows downward, but we map it from (stack_base - stack_size) to stack_base
+        let stack_start = stack_base.wrapping_sub(stack_size as u32);
+        bus.add_device(stack_start, stack_size as u32, Box::new(Ram::new(stack_size)));
 
         Processor {
-            pc: text_base,              // Default starts at text_base
+            pc: text_base,
             registers,
-            memory: Memory {
-                text: Vec::new(),       // filled by load
-                data: Vec::new(),       // filled by load
-                stack: vec![0u8; stack_size],  // pre-allocated, grows downward from stack_base
-                text_base,
-                data_base,
-                stack_base,
-            },
+            bus,
+            text_base,
+            data_base,
+            stack_base,
+            stack_size,
         }
     }
 
     pub fn load(&mut self, text: &Vec<u8>, data: &Vec<u8>) {
-        self.memory.text = text.clone();
-        self.memory.data = data.clone();
-        self.pc = self.memory.text_base;
-        // TODO Optionally reset registers or just SP here?
-        // Given reset() does it, we keep load focused on the memory load and PC reset.
+        // Since the Bus uses Box<dyn Device>, we need a way to update the Rom/Ram data.
+        // For now, we'll re-initialize the bus regions for text and data.
+
+        // Remove old regions for text/data if they exist
+        self.bus.regions.retain(|(base, _, _)| *base != self.text_base && *base != self.data_base);
+
+        // Add new Rom for text
+        self.bus.add_device(self.text_base, text.len() as u32, Box::new(Rom::new(text.clone())));
+
+        // Add new Ram for data
+        let mut ram_data = Ram::new(data.len());
+        ram_data.data = data.clone();
+        self.bus.add_device(self.data_base, data.len() as u32, Box::new(ram_data));
+
+        self.pc = self.text_base;
     }
 
     pub fn reset(&mut self) {
-        self.pc = self.memory.text_base;
-        self.registers = [0; config::NUM_REGISTERS];
-        self.registers[2] = self.memory.stack_base; // Initialize SP (x2)
-        // Note: Stack and other memory are effectively overwritten dynamically;
-        // but resetting registers and PC is enough for a clean restart.
+        self.pc = self.text_base;
+        self.registers = [0; crate::config::NUM_REGISTERS];
+        self.registers[2] = self.stack_base;
     }
 
     pub fn step(&mut self) -> Result<(), StepError> {
-        // TODO return StepResult for the visibility outside the processor? i.e. UI?
-        // separation of concerns vs monitoring
         let memory_instruction = self.fetch()?;
         let instruction = self.decode(memory_instruction)?;
         self.execute(instruction)?;
@@ -209,16 +149,7 @@ impl Processor {
     }
 
     fn fetch(&self) -> Result<u32, StepError> {
-        // TODO handle overflow as well as negative offsets MemoryFaults
-        let offset = (self.pc - self.memory.text_base) as usize;
-
-        // obtain 4 bytes representing the instruction
-        let bytes = self.memory.text.get(offset..offset + 4)
-            .ok_or(MemoryFault::OutOfBounds { address: self.pc })?;
-
-        // assemble 4 bytes into u32, assuming little endian
-        let instruction = u32::from_le_bytes(bytes.try_into().unwrap());
-        Ok(instruction)
+        self.bus.read(self.pc, AccessSize::Word).map_err(|e| StepError::MemoryFault(e))
     }
 
     fn decode(&self, memory_instruction: u32) -> Result<Instruction, StepError> {
@@ -495,47 +426,47 @@ impl Processor {
             Instruction::Lb { rd, rs1, imm } => {
                 // rd = M[rs1+imm][0:7] (sign extended)
                 let address = self.read_register(rs1).wrapping_add(imm as u32);
-                let value = self.memory.read_byte(address)?;
+                let value = self.bus.read(address, AccessSize::Byte)?;
                 self.write_register(rd, value as i8 as u32);
             },
             Instruction::Lh { rd, rs1, imm } => {
                 // rd = M[rs1+imm][0:15] (sign extended)
                 let address = self.read_register(rs1).wrapping_add(imm as u32);
-                let value = self.memory.read_half(address)?;
+                let value = self.bus.read(address, AccessSize::Half)?;
                 self.write_register(rd, value as i16 as u32);
             },
             Instruction::Lw { rd, rs1, imm } => {
                 // rd = M[rs1+imm][0:31]
                 let address = self.read_register(rs1).wrapping_add(imm as u32);
-                let value = self.memory.read_word(address)?;
+                let value = self.bus.read(address, AccessSize::Word)?;
                 self.write_register(rd, value);
             },
             Instruction::Lbu { rd, rs1, imm } => {
                 // rd = M[rs1+imm][0:7] (zero extended)
                 let address = self.read_register(rs1).wrapping_add(imm as u32);
-                let value = self.memory.read_byte(address)?;
+                let value = self.bus.read(address, AccessSize::Byte)?;
                 self.write_register(rd, value as u32);
             },
             Instruction::Lhu { rd, rs1, imm } => {
                 // rd = M[rs1+imm][0:15] (zero extended)
                 let address = self.read_register(rs1).wrapping_add(imm as u32);
-                let value = self.memory.read_half(address)?;
+                let value = self.bus.read(address, AccessSize::Half)?;
                 self.write_register(rd, value as u32);
             },
             Instruction::Sb { rs1, rs2, imm } => {
                 // M[rs1+imm][0:7] = rs2[0:7]
                 let address = self.read_register(rs1).wrapping_add(imm as u32);
-                self.memory.write_byte(address, self.read_register(rs2) as u8)?;
+                self.bus.write(address, self.read_register(rs2), AccessSize::Byte)?;
             },
             Instruction::Sh { rs1, rs2, imm } => {
                 // M[rs1+imm][0:15] = rs2[0:15]
                 let address = self.read_register(rs1).wrapping_add(imm as u32);
-                self.memory.write_half(address, self.read_register(rs2) as u16)?;
+                self.bus.write(address, self.read_register(rs2), AccessSize::Half)?;
             },
             Instruction::Sw { rs1, rs2, imm } => {
                 // M[rs1+imm][0:31] = rs2[0:31]
                 let address = self.read_register(rs1).wrapping_add(imm as u32);
-                self.memory.write_word(address, self.read_register(rs2))?;
+                self.bus.write(address, self.read_register(rs2), AccessSize::Word)?;
             },
             Instruction::Beq { rs1, rs2, imm } => {
                 // if(rs1 == rs2) PC += imm
@@ -624,28 +555,28 @@ impl Processor {
         self.pc
     }
 
-    pub fn registers(&self) -> &[u32; config::NUM_REGISTERS] {
+    pub fn registers(&self) -> &[u32; crate::config::NUM_REGISTERS] {
         &self.registers
     }
 
     pub fn read_memory_word(&self, address: u32) -> Result<u32, MemoryFault> {
-        self.memory.read_word(address)
+        self.bus.read(address, AccessSize::Word)
     }
 
     pub fn text_base(&self) -> u32 {
-        self.memory.text_base
+        self.text_base
     }
 
     pub fn data_base(&self) -> u32 {
-        self.memory.data_base
+        self.data_base
     }
 
     pub fn stack_base(&self) -> u32 {
-        self.memory.stack_base
+        self.stack_base
     }
 
     pub fn stack_size(&self) -> usize {
-        self.memory.stack.len()
+        self.stack_size
     }
 }
 
@@ -805,7 +736,7 @@ mod tests {
     fn test_step_pc_increment() {
         let mut processor = Processor::new(0x400000, 0, 0, 0);
         // add x3, x1, x2 (0x002081B3)
-        processor.memory.text = vec![0xB3, 0x81, 0x20, 0x00];
+        processor.load(&vec![0xB3, 0x81, 0x20, 0x00], &vec![]);
         processor.pc = 0x400000;
 
         processor.step().unwrap();
@@ -867,7 +798,7 @@ mod tests {
 
     fn processor_with_data(data: Vec<u8>) -> Processor {
         let mut p = Processor::new(0x0, 0x10000000, 0x7FFFFFFF, 1024);
-        p.memory.data = data;
+        p.load(&Vec::new(), &data);
         p
     }
 
@@ -912,7 +843,7 @@ mod tests {
         p.write_register(1, 0x10000001); // point rs1 past the first byte
         p.write_register(2, 0x42);
         p.execute(Instruction::Sb { rs1: 1, rs2: 2, imm: -1 }).unwrap();
-        assert_eq!(p.memory.data[0], 0x42);
+        assert_eq!(p.bus.read(p.data_base, AccessSize::Byte).unwrap(), 0x42);
     }
 
     #[test]

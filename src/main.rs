@@ -5,6 +5,7 @@ mod symbols;
 mod assembler;
 mod processor;
 mod pseudo;
+mod bus;
 mod tui;
 
 fn main() -> Result<(), std::io::Error> {
