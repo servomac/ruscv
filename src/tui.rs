@@ -370,12 +370,13 @@ mod ui {
             }
         }
 
-        let section = if mem_start >= config::STACK_BASE.saturating_sub(config::STACK_SIZE as u32) {
-            "stack"
-        } else if mem_start >= config::DATA_BASE {
+        let stack_start = config::STACK_BASE.saturating_sub(config::STACK_SIZE as u32);
+        let section = if mem_start >= config::DATA_BASE {
             "data"
         } else if mem_start >= config::TEXT_BASE {
             "text"
+        } else if mem_start >= stack_start && mem_start < config::STACK_BASE {
+            "stack"
         } else {
             "unmapped"
         };
