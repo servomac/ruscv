@@ -11,6 +11,9 @@ pub struct Processor {
     data_base: u32,
     stack_base: u32,
     stack_size: usize,
+    // Minimal CSR state needed to run rv32ui test preamble
+    mtvec: u32,
+    mcause: u32,
 }
 
 #[derive(Debug, PartialEq)]
@@ -83,6 +86,10 @@ enum Instruction {
     // System
     Ecall,
     Ebreak,
+    // Zicsr: minimal CSR support — tracks mtvec/mcause, everything else is no-op
+    Csr { rd: usize, csr_addr: u32, write_val: u32 },
+    // Fence / Fence.I: no-op in a simple in-order emulator
+    Fence,
 }
 
 impl Processor {
@@ -115,6 +122,8 @@ impl Processor {
             data_base,
             stack_base,
             stack_size,
+            mtvec: 0,
+            mcause: 0,
         }
     }
 
@@ -150,6 +159,8 @@ impl Processor {
             data_base: 0,
             stack_base,
             stack_size,
+            mtvec: 0,
+            mcause: 0,
         }
     }
 
@@ -193,7 +204,8 @@ impl Processor {
             0b1100111 => self.decode_jalr_type(memory_instruction), // jalr
             0b0110111 => self.decode_u_type(memory_instruction), // lui
             0b0010111 => self.decode_u_type(memory_instruction), // auipc
-            0b1110011 => self.decode_system_type(memory_instruction), // ecall, ebreak
+            0b1110011 => self.decode_system_type(memory_instruction), // ecall, ebreak, csr
+            0b0001111 => Ok(Instruction::Fence), // fence, fence.i
             _ => Err(StepError::IllegalInstruction),
         }
     }
@@ -355,12 +367,27 @@ impl Processor {
     }
 
     fn decode_system_type(&self, memory_instruction: u32) -> Result<Instruction, StepError> {
-        let imm = ((memory_instruction >> 20) & 0xFFF) as i32;
+        let func3 = (memory_instruction >> 12) & 0x7;
 
+        if func3 != 0 {
+            let rd       = ((memory_instruction >> 7)  & 0x1F) as usize;
+            let csr_addr =  (memory_instruction >> 20) & 0xFFF;
+            let rs1      = ((memory_instruction >> 15) & 0x1F) as usize;
+            // func3 1-3: register source; 5-7: 5-bit unsigned immediate in rs1 field
+            let write_val = if func3 >= 5 {
+                rs1 as u32  // CSRRWI/CSRRSI/CSRRCI use uimm
+            } else {
+                self.read_register(rs1)
+            };
+            return Ok(Instruction::Csr { rd, csr_addr, write_val });
+        }
+
+        let imm = (memory_instruction >> 20) & 0xFFF;
         match imm {
-            0x0 => Ok(Instruction::Ecall),
-            0x1 => Ok(Instruction::Ebreak),
-            _ => Err(StepError::IllegalInstruction),
+            0x000 => Ok(Instruction::Ecall),
+            0x001 => Ok(Instruction::Ebreak),
+            // mret, sret, wfi and other privileged instructions — no-op
+            _ => Ok(Instruction::Csr { rd: 0, csr_addr: 0, write_val: 0 }),
         }
     }
 
@@ -538,10 +565,10 @@ impl Processor {
                 next_pc = self.pc.wrapping_add(imm as u32);
             },
             Instruction::Jalr { rd, rs1, imm } => {
-                // rd = PC+4; PC = rs1 + imm
+                // Read rs1 before writing rd — handles the rd==rs1 case correctly
+                let target = self.read_register(rs1).wrapping_add(imm as u32) & !1;
                 self.write_register(rd, self.pc.wrapping_add(4));
-                // The & !1 masks out bit 0, ensuring the target is always 2-byte aligned
-                next_pc = self.read_register(rs1).wrapping_add(imm as u32) & !1;
+                next_pc = target;
             },
             Instruction::Lui { rd, imm } => {
                 // rd = upper imm (upper mask already applied by the decoder)
@@ -552,7 +579,28 @@ impl Processor {
                 self.write_register(rd, self.pc.wrapping_add(imm as u32));
             },
             Instruction::Ebreak => return Err(StepError::Ebreak),
-            // TODO  ecall
+            Instruction::Csr { rd, csr_addr, write_val } => {
+                const MTVEC:  u32 = 0x305;
+                const MCAUSE: u32 = 0x342;
+                // Read side: return tracked value for mcause, 0 for everything else
+                let read_val = match csr_addr {
+                    MCAUSE => self.mcause,
+                    _ => 0,
+                };
+                self.write_register(rd, read_val);
+                // Write side: only track mtvec; all other CSR writes are silently ignored
+                if csr_addr == MTVEC {
+                    self.mtvec = write_val;
+                }
+            },
+            Instruction::Fence => {
+                // No-op: single-core in-order emulator has no reordering to fence.
+            },
+            Instruction::Ecall => {
+                // Simulate M-mode ecall: set mcause=11, jump to trap handler (mtvec)
+                self.mcause = 11;
+                next_pc = self.mtvec;
+            },
             _ => return Err(StepError::IllegalInstruction),
         }
 

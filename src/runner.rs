@@ -1,0 +1,37 @@
+use crate::elf_loader;
+use crate::processor::{Processor, StepError};
+
+pub const DEFAULT_MAX_STEPS: u64 = 100_000_000;
+
+#[derive(Debug)]
+pub enum TestResult {
+    Pass,
+    Fail { exit_code: u32 },
+    Fault(StepError),
+    MaxSteps,
+}
+
+/// Load and run an ELF32 binary, returning when tohost is written or a halt
+/// condition is reached. Returns Err if the ELF cannot be parsed.
+pub fn run_elf(elf_bytes: &[u8], max_steps: u64) -> Result<TestResult, String> {
+    let image = elf_loader::load(elf_bytes).map_err(|e| e.to_string())?;
+    let tohost_addr = image.tohost_addr;
+    let mut processor = Processor::from_elf(&image);
+
+    for _ in 0..max_steps {
+        match processor.step() {
+            Ok(()) => {}
+            Err(e) => return Ok(TestResult::Fault(e)),
+        }
+
+        if let Some(addr) = tohost_addr {
+            match processor.read_memory_word(addr) {
+                Ok(1) => return Ok(TestResult::Pass),
+                Ok(v) if v != 0 => return Ok(TestResult::Fail { exit_code: v >> 1 }),
+                _ => {}
+            }
+        }
+    }
+
+    Ok(TestResult::MaxSteps)
+}
