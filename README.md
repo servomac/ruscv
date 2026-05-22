@@ -28,10 +28,9 @@ A RISC-V Assembler and Emulator implementation in Rust.
 
 ## Pending Features
 
-- **Memory System and Faults**: Implement proper memory system and fault handling for out-of-bounds, unaligned, and non-executable access.
-- **Privileged ISA Specification**
-- **System Instructions**: Implement `ECALL` for system calls.
-- **ELF Support**: Load and execute RISC-V ELF binaries (initially ELF32), including parsing headers, mapping loadable segments, and setting the simulator PC to the ELF entry point.
+- **Privileged ISA**: Full M-mode trap infrastructure — correct `mepc` save on trap entry, working `MRET`, `mstatus` (MIE/MPIE/MPP), `mscratch`, `mtval`. Currently only `mtvec` and `mcause` are tracked.
+- **UART**: The UART device is registered but is a no-op stub; writes to THR are silently dropped.
+- **CLINT Timer**: `mtime`/`mtimecmp` and timer-interrupt delivery are not yet implemented.
 
 ## Project Structure
 
