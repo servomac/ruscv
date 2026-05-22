@@ -1,4 +1,5 @@
 use crate::bus::{Bus, Ram, Rom, MmioDevice, AccessSize, MemoryFault};
+use crate::elf_loader::ElfImage;
 
 
 pub struct Processor {
@@ -112,6 +113,41 @@ impl Processor {
             bus,
             text_base,
             data_base,
+            stack_base,
+            stack_size,
+        }
+    }
+
+    pub fn from_elf(image: &ElfImage) -> Self {
+        let stack_base = crate::config::STACK_BASE;
+        let stack_size = crate::config::STACK_SIZE;
+
+        let mut registers = [0; crate::config::NUM_REGISTERS];
+        registers[2] = stack_base; // sp
+
+        let mut bus = Bus::new();
+
+        bus.add_device(crate::config::CLINT_BASE, crate::config::CLINT_SIZE, Box::new(MmioDevice::new("CLINT")));
+        bus.add_device(crate::config::PLIC_BASE, crate::config::PLIC_SIZE, Box::new(MmioDevice::new("PLIC")));
+        bus.add_device(crate::config::UART_BASE, crate::config::UART_SIZE, Box::new(MmioDevice::new("UART")));
+
+        // Map every ELF PT_LOAD segment as writable RAM so self-modifying
+        // tests (fence_i) work without needing separate ROM regions.
+        for (addr, data) in &image.segments {
+            let mut ram = Ram::new(data.len());
+            ram.data.copy_from_slice(data);
+            bus.add_device(*addr, data.len() as u32, Box::new(ram));
+        }
+
+        let stack_start = stack_base.wrapping_sub(stack_size as u32);
+        bus.add_device(stack_start, stack_size as u32, Box::new(Ram::new(stack_size)));
+
+        Processor {
+            pc: image.entry_point,
+            registers,
+            bus,
+            text_base: image.entry_point,
+            data_base: 0,
             stack_base,
             stack_size,
         }
