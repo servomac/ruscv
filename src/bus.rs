@@ -56,13 +56,35 @@ impl Bus {
         self.read(addr, AccessSize::Word)
     }
 
-    pub fn remove_region(&mut self, base_addr: u32) {
+    fn remove_region(&mut self, base_addr: u32) {
         self.regions.retain(|(base, _, _)| *base != base_addr);
     }
 
     pub fn replace_device(&mut self, base: u32, size: u32, device: Box<dyn Device>) {
         self.remove_region(base);
         self.add_device(base, size, device);
+    }
+}
+
+fn read_bytes(data: &[u8], addr: u32, size: AccessSize) -> Result<u32, MemoryFault> {
+    let addr = addr as usize;
+    match size {
+        AccessSize::Byte => data
+            .get(addr)
+            .map(|&b| b as u32)
+            .ok_or(MemoryFault::OutOfBounds { address: addr as u32 }),
+        AccessSize::Half => {
+            let bytes = data
+                .get(addr..addr + 2)
+                .ok_or(MemoryFault::OutOfBounds { address: addr as u32 })?;
+            Ok(u32::from_le_bytes([bytes[0], bytes[1], 0, 0]))
+        }
+        AccessSize::Word => {
+            let bytes = data
+                .get(addr..addr + 4)
+                .ok_or(MemoryFault::OutOfBounds { address: addr as u32 })?;
+            Ok(u32::from_le_bytes(bytes.try_into().unwrap()))
+        }
     }
 }
 
@@ -81,60 +103,22 @@ impl Ram {
 
 impl Device for Ram {
     fn read(&self, addr: u32, size: AccessSize) -> Result<u32, MemoryFault> {
-        let addr = addr as usize;
-        match size {
-            AccessSize::Byte => {
-                self.data.get(addr).map(|&b| b as u32).ok_or(MemoryFault::OutOfBounds { address: addr as u32 })
-            }
-            AccessSize::Half => {
-                if addr + 1 >= self.data.len() {
-                    return Err(MemoryFault::OutOfBounds { address: addr as u32 });
-                }
-                let val = (self.data[addr] as u32) | (self.data[addr + 1] as u32) << 8;
-                Ok(val)
-            }
-            AccessSize::Word => {
-                if addr + 3 >= self.data.len() {
-                    return Err(MemoryFault::OutOfBounds { address: addr as u32 });
-                }
-                let val = (self.data[addr] as u32)
-                    | (self.data[addr + 1] as u32) << 8
-                    | (self.data[addr + 2] as u32) << 16
-                    | (self.data[addr + 3] as u32) << 24;
-                Ok(val)
-            }
-        }
+        read_bytes(&self.data, addr, size)
     }
 
     fn write(&mut self, addr: u32, val: u32, size: AccessSize) -> Result<(), MemoryFault> {
         let addr = addr as usize;
-        match size {
-            AccessSize::Byte => {
-                if addr >= self.data.len() {
-                    return Err(MemoryFault::OutOfBounds { address: addr as u32 });
-                }
-                self.data[addr] = val as u8;
-                Ok(())
-            }
-            AccessSize::Half => {
-                if addr + 1 >= self.data.len() {
-                    return Err(MemoryFault::OutOfBounds { address: addr as u32 });
-                }
-                self.data[addr] = val as u8;
-                self.data[addr + 1] = (val >> 8) as u8;
-                Ok(())
-            }
-            AccessSize::Word => {
-                if addr + 3 >= self.data.len() {
-                    return Err(MemoryFault::OutOfBounds { address: addr as u32 });
-                }
-                self.data[addr] = val as u8;
-                self.data[addr + 1] = (val >> 8) as u8;
-                self.data[addr + 2] = (val >> 16) as u8;
-                self.data[addr + 3] = (val >> 24) as u8;
-                Ok(())
-            }
-        }
+        let bytes = val.to_le_bytes();
+        let n = match size {
+            AccessSize::Byte => 1,
+            AccessSize::Half => 2,
+            AccessSize::Word => 4,
+        };
+        let slot = self.data
+            .get_mut(addr..addr + n)
+            .ok_or(MemoryFault::OutOfBounds { address: addr as u32 })?;
+        slot.copy_from_slice(&bytes[..n]);
+        Ok(())
     }
 }
 
@@ -151,29 +135,7 @@ impl Rom {
 
 impl Device for Rom {
     fn read(&self, addr: u32, size: AccessSize) -> Result<u32, MemoryFault> {
-        let addr = addr as usize;
-        match size {
-            AccessSize::Byte => {
-                self.data.get(addr).map(|&b| b as u32).ok_or(MemoryFault::OutOfBounds { address: addr as u32 })
-            }
-            AccessSize::Half => {
-                if addr + 1 >= self.data.len() {
-                    return Err(MemoryFault::OutOfBounds { address: addr as u32 });
-                }
-                let val = (self.data[addr] as u32) | (self.data[addr + 1] as u32) << 8;
-                Ok(val)
-            }
-            AccessSize::Word => {
-                if addr + 3 >= self.data.len() {
-                    return Err(MemoryFault::OutOfBounds { address: addr as u32 });
-                }
-                let val = (self.data[addr] as u32)
-                    | (self.data[addr + 1] as u32) << 8
-                    | (self.data[addr + 2] as u32) << 16
-                    | (self.data[addr + 3] as u32) << 24;
-                Ok(val)
-            }
-        }
+        read_bytes(&self.data, addr, size)
     }
 
     fn write(&mut self, addr: u32, _val: u32, _size: AccessSize) -> Result<(), MemoryFault> {

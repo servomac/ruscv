@@ -26,6 +26,12 @@ pub struct SourceMapping {
     pub section: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Section {
+    Text,
+    Data,
+}
+
 pub struct Assembler {
     pub text_bin: Vec<u8>,
     pub data_bin: Vec<u8>,
@@ -48,16 +54,16 @@ impl Assembler {
     pub fn assemble(&mut self, statements: &[Statement], sym_table: &SymbolTable) -> Result<(), Vec<AssemblerError>> {
         let mut current_pc = self.text_base;
         let mut data_pc = self.data_base;
-        let mut current_section = ".text";
+        let mut current_section = Section::Text;
         let mut errors = Vec::new();
 
         for stmt in statements {
-            let addr = if current_section == ".text" { current_pc } else { data_pc };
+            let addr = if current_section == Section::Text { current_pc } else { data_pc };
 
             self.debug_info.address_to_source.insert(addr, SourceMapping {
                 line: stmt.line,
                 raw_text: stmt.to_string(),
-                section: current_section.to_string(),
+                section: format!("{:?}", current_section).to_lowercase(),
             });
 
             match &stmt.kind {
@@ -73,9 +79,13 @@ impl Assembler {
                     }
                 }
                 StatementKind::Directive(name, ops) => {
-                    if name == ".text" || name == ".data" {
-                        current_section = name.as_str();
-                        continue; // No bytes to emit for section directives
+                    if name == ".text" {
+                        current_section = Section::Text;
+                        continue;
+                    }
+                    if name == ".data" {
+                        current_section = Section::Data;
+                        continue;
                     }
 
                     if name == ".align" {
@@ -84,7 +94,7 @@ impl Assembler {
                             let padding = (alignment - (addr % alignment)) % alignment;
                             let padding_bytes = vec![0u8; padding as usize];
 
-                            if current_section == ".text" {
+                            if current_section == Section::Text {
                                 self.text_bin.extend_from_slice(&padding_bytes);
                                 current_pc += padding;
                             } else {
@@ -100,9 +110,8 @@ impl Assembler {
 
                     match emit_data_bytes(name, ops) {
                         Ok(bytes) => {
-                            if current_section == ".text" {
-                                // TODO doubt: this seems to let me put data in the text section with some directives.. this is ok??
-                                // current assemblers allows it (i.e. GNU AS), but maybe I should launch a warning or be more restrictive
+                            // GNU AS allows data directives in .text; emit to the active section.
+                            if current_section == Section::Text {
                                 self.text_bin.extend_from_slice(&bytes);
                                 current_pc += bytes.len() as u32;
                             } else {

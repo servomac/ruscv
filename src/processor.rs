@@ -92,6 +92,12 @@ enum Instruction {
     Fence,
 }
 
+fn register_platform_devices(bus: &mut Bus) {
+    bus.add_device(crate::config::CLINT_BASE, crate::config::CLINT_SIZE, Box::new(MmioDevice::new("CLINT")));
+    bus.add_device(crate::config::PLIC_BASE, crate::config::PLIC_SIZE, Box::new(MmioDevice::new("PLIC")));
+    bus.add_device(crate::config::UART_BASE, crate::config::UART_SIZE, Box::new(MmioDevice::new("UART")));
+}
+
 impl Processor {
     pub fn new(text_base: u32, data_base: u32, stack_base: u32, stack_size: usize) -> Self {
         let mut registers = [0; crate::config::NUM_REGISTERS];
@@ -100,9 +106,7 @@ impl Processor {
         let mut bus = Bus::new();
 
         // QEMU virt standard devices (placeholders)
-        bus.add_device(crate::config::CLINT_BASE, crate::config::CLINT_SIZE, Box::new(MmioDevice::new("CLINT")));
-        bus.add_device(crate::config::PLIC_BASE, crate::config::PLIC_SIZE, Box::new(MmioDevice::new("PLIC")));
-        bus.add_device(crate::config::UART_BASE, crate::config::UART_SIZE, Box::new(MmioDevice::new("UART")));
+        register_platform_devices(&mut bus);
 
         // Initial regions for backward compatibility with existing tests
         // and current assembler/loader expectations.
@@ -136,9 +140,7 @@ impl Processor {
 
         let mut bus = Bus::new();
 
-        bus.add_device(crate::config::CLINT_BASE, crate::config::CLINT_SIZE, Box::new(MmioDevice::new("CLINT")));
-        bus.add_device(crate::config::PLIC_BASE, crate::config::PLIC_SIZE, Box::new(MmioDevice::new("PLIC")));
-        bus.add_device(crate::config::UART_BASE, crate::config::UART_SIZE, Box::new(MmioDevice::new("UART")));
+        register_platform_devices(&mut bus);
 
         // Map every ELF PT_LOAD segment as writable RAM so self-modifying
         // tests (fence_i) work without needing separate ROM regions.

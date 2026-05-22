@@ -77,7 +77,7 @@ impl SymbolTable {
                     let aligned_pc = (current_pc + alignment - 1) & !(alignment - 1);
                     Ok(aligned_pc - current_pc)
                 } else {
-                    Err("Directive .align requieres a power of 2 parameter".into())
+                    Err("Directive .align requires a power of 2 parameter".into())
                 }
             },
             ".word"  => Ok((operands.len() as u32) * 4),
@@ -102,7 +102,7 @@ impl SymbolTable {
                 if let Some(Operand::Immediate(n)) = operands.get(0) {
                     Ok(*n as u32)
                 } else {
-                    Err("Directive .space requires an inmediate value".into())
+                    Err("Directive .space requires an immediate value".into())
                 }
             },
             _ => Ok(0),
