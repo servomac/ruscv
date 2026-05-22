@@ -20,6 +20,9 @@ A RISC-V Assembler and Emulator implementation in Rust.
   - **Data**: `.byte`, `.half`, `.word`, `.ascii`, `.asciz`, `.string`, `.space`
   - **Alignment**: `.align`
   - **Modifiers**: `%hi(symbol)`, `%lo(symbol)`
+- **ELF32 Loader**: Loads pre-compiled ELF32 binaries directly, mapping each `PT_LOAD` segment into the address space and resolving the `tohost` symbol for test pass/fail detection.
+- **Headless ELF Runner**: Runs an ELF binary non-interactively from the command line, printing `PASS` or `FAIL` and exiting with the appropriate code — suitable for scripting and CI.
+- **rv32ui Test Suite**: Passes all 40 `rv32ui-p` tests from the official RISC-V test suite (`make run-tests`).
 - **Comprehensive Error Handling**: The assembler identifies and reports multiple errors across the source file instead of failing at the first encountered issue.
 - **Unit Tested**: Extensively verified with a suite of unit tests for instruction encoding, decoding, and execution state transitions.
 
@@ -34,6 +37,8 @@ A RISC-V Assembler and Emulator implementation in Rust.
 
 - `src/tui.rs`: The interactive Terminal User Interface.
 - `src/processor.rs`: The heart of the emulator, handling instruction fetch, decode, and execution.
+- `src/elf_loader.rs`: ELF32 parser — maps PT_LOAD segments and resolves the `tohost` symbol.
+- `src/runner.rs`: Headless ELF runner — steps the processor and detects pass/fail via `tohost`.
 - `src/assembler.rs`: Converts instructions and data into binary segments.
 - `src/symbols.rs`: Handles label definitions and address resolution.
 - `src/parser.rs`: Parses tokens into abstract statements.
@@ -55,6 +60,14 @@ You can also pass an optional assembly file to be loaded directly into the edito
 cargo run -- path/to/file.asm
 ```
 
+To run a pre-compiled ELF32 binary headlessly:
+
+```bash
+cargo run -- --elf path/to/binary.elf
+# PASS  (exit code 0)
+# FAIL (test case N)  (exit code 1)
+```
+
 ### Controls
 
 | Key | Action |
@@ -71,10 +84,16 @@ cargo run -- path/to/file.asm
 
 ## Running Tests
 
-To run the comprehensive test suite:
+To run the unit test suite:
 
 ```bash
 cargo test
+```
+
+To run the official rv32ui-p RISC-V test suite (downloads pre-compiled binaries on first run):
+
+```bash
+make run-tests
 ```
 
 ## Contributing
