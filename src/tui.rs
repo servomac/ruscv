@@ -51,6 +51,7 @@ pub struct App<'a> {
     pub debug_info: Option<assembler::DebugInfo>,
     pub prev_registers: [u32; config::NUM_REGISTERS],
     pub error_line: Option<usize>,
+    pub memory_pane_height: u16,
 }
 
 impl<'a> App<'a> {
@@ -95,6 +96,7 @@ impl<'a> App<'a> {
             debug_info: None,
             prev_registers,
             error_line: None,
+            memory_pane_height: 20,
         }
     }
 }
@@ -239,6 +241,7 @@ fn run_app<B: ratatui::backend::Backend>(
                         }
                     }
                     move_cursor_to_pc(&mut app);
+                    maybe_follow_pc_in_memory(&mut app);
                     continue;
                 }
 
@@ -255,6 +258,7 @@ fn run_app<B: ratatui::backend::Backend>(
                     match app.processor.step() {
                         Ok(_) => {
                             move_cursor_to_pc(&mut app);
+                            maybe_follow_pc_in_memory(&mut app);
                         }
                         Err(e) => {
                             app.logs.push(format!("Halted: {}", format_step_error(&e)));
@@ -299,6 +303,16 @@ fn run_app<B: ratatui::backend::Backend>(
                 }
             }
         }
+    }
+}
+
+fn maybe_follow_pc_in_memory(app: &mut App) {
+    let pc = app.processor.pc();
+    let visible_bytes = (app.memory_pane_height as u32) * 4;
+    let in_view = pc >= app.memory_scroll
+        && pc < app.memory_scroll.saturating_add(visible_bytes);
+    if !in_view {
+        app.memory_scroll = pc;
     }
 }
 
@@ -355,13 +369,44 @@ mod ui {
             ])
             .split(f.area());
 
-        // Top bar
-        let top_msg = Paragraph::new(format!(
-            "Mode: {:?} | Format (F9): {:?} | Pane (Tab): {:?} | PC: 0x{:08x} | Press ESC to quit",
-            app.mode, app.number_format, app.active_pane, app.processor.pc()
-        ))
-        .block(Block::default().borders(Borders::ALL));
-        f.render_widget(top_msg, chunks[0]);
+        // Top bar — styled spans
+        let dim   = Style::default().fg(Color::DarkGray);
+        let key   = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+        let val   = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
+        let sep   = Span::styled("  │  ", dim);
+        let mode_color = match app.mode {
+            RunMode::Editing  => Color::Gray,
+            RunMode::Stepping => Color::Green,
+            RunMode::Running  => Color::Yellow,
+        };
+        let mode_label = match app.mode {
+            RunMode::Editing  => "Editing",
+            RunMode::Stepping => "Stepping",
+            RunMode::Running  => "Running",
+        };
+        let fmt_label = match app.number_format {
+            NumFormat::Hex     => "Hex",
+            NumFormat::Binary  => "Bin",
+            NumFormat::Decimal => "Dec",
+        };
+        let top_line = Line::from(vec![
+            Span::styled(" PC ", dim),
+            Span::styled(format!("0x{:08x}", app.processor.pc()), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            sep.clone(),
+            Span::styled(mode_label, Style::default().fg(mode_color).add_modifier(Modifier::BOLD)),
+            sep.clone(),
+            Span::styled(fmt_label, val),
+            sep.clone(),
+            Span::styled("F2", key), Span::styled(":Load ", dim),
+            Span::styled("F5", key), Span::styled(":Run ", dim),
+            Span::styled("F10", key), Span::styled(":Step ", dim),
+            Span::styled("F9", key), Span::styled(":Fmt ", dim),
+            Span::styled("Tab", key), Span::styled(":Pane ", dim),
+            Span::styled("Esc", key), Span::styled(":Quit", dim),
+        ]);
+        let top_bar = Paragraph::new(top_line)
+            .block(Block::default().borders(Borders::ALL));
+        f.render_widget(top_bar, chunks[0]);
 
         // Middle section
         let middle_chunks = Layout::default()
@@ -424,6 +469,7 @@ mod ui {
         // Memory
         let mem_start = app.memory_scroll;
         let mem_size_words = middle_chunks[2].height.saturating_sub(2) as u32;
+        app.memory_pane_height = mem_size_words as u16;
 
         // We use a Vec of Lines so we can color individual addresses, such as the active PC
         let mut mem_lines: Vec<Line> = Vec::new();
