@@ -3,6 +3,21 @@ use std::fmt;
 
 use crate::lexer::{SpannedToken, Token, ModifierKind};
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Section {
+    Text,
+    Data,
+}
+
+impl fmt::Display for Section {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Section::Text => write!(f, ".text"),
+            Section::Data => write!(f, ".data"),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub struct ParseError {
     pub line: usize,

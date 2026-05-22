@@ -290,72 +290,24 @@ fn expand_statement(statement: Statement) -> Result<Vec<Statement>, String> {
             expand_0op(&name, ops, "jalr", line, vec![Operand::Register(0), Operand::Register(1), Operand::Immediate(0)])
         }
         "call" => {
-            if ops.len() == 1 {
-                let offset = ops.into_iter().next().unwrap();
-                // Validate offset is an Immediate or Label
-                let (offset_high, offset_low) = match offset {
-                    Operand::Immediate(imm) => (
-                        Operand::Immediate(((imm as i64 + 0x800) >> 12) as i32),
-                        Operand::Immediate((imm << 20) >> 20),
-                    ),
-                    Operand::Label(label) => (
-                        Operand::Modifier(ModifierKind::Hi, label.clone()),
-                        Operand::Modifier(ModifierKind::Lo, label)
-                    ),
-                    _ => return Err(format!("Invalid operand for 'call' pseudo-instruction. Expected an immediate or label, got {}", offset)),
-                };
-                Ok(vec![Statement {
-                    kind: StatementKind::Instruction("auipc".to_string(), vec![
-                        Operand::Register(1),
-                        offset_high,
-                    ]),
-                    line,
-                },
-                    Statement {
-                    kind: StatementKind::Instruction("jalr".to_string(), vec![
-                        Operand::Register(1),
-                        Operand::Register(1),
-                        offset_low,
-                    ]),
-                    line,
-                }])
-            } else {
-                Err(format!("Invalid number of operands for 'call' pseudo-instruction. Expected 1, got {}", ops.len()))
+            if ops.len() != 1 {
+                return Err(format!("Invalid number of operands for 'call' pseudo-instruction. Expected 1, got {}", ops.len()));
             }
+            let (hi, lo) = split_hi_lo(ops.into_iter().next().unwrap(), "call")?;
+            Ok(vec![
+                Statement { kind: StatementKind::Instruction("auipc".to_string(), vec![Operand::Register(1), hi]), line },
+                Statement { kind: StatementKind::Instruction("jalr".to_string(),  vec![Operand::Register(1), Operand::Register(1), lo]), line },
+            ])
         }
         "tail" => {
-            if ops.len() == 1 {
-                let offset = ops.into_iter().next().unwrap();
-                // Validate offset is an Immediate or Label
-                let (offset_high, offset_low) = match offset {
-                    Operand::Immediate(imm) => (
-                        Operand::Immediate(((imm as i64 + 0x800) >> 12) as i32),
-                        Operand::Immediate((imm << 20) >> 20),
-                    ),
-                    Operand::Label(label) => (
-                        Operand::Modifier(ModifierKind::Hi, label.clone()),
-                        Operand::Modifier(ModifierKind::Lo, label)
-                    ),
-                    _ => return Err(format!("Invalid operand for 'tail' pseudo-instruction. Expected an immediate or label, got {}", offset)),
-                };
-                Ok(vec![Statement {
-                    kind: StatementKind::Instruction("auipc".to_string(), vec![
-                        Operand::Register(6),
-                        offset_high,
-                    ]),
-                    line,
-                },
-                    Statement {
-                    kind: StatementKind::Instruction("jalr".to_string(), vec![
-                        Operand::Register(0),
-                        Operand::Register(6),
-                        offset_low,
-                    ]),
-                    line,
-                }])
-            } else {
-                Err(format!("Invalid number of operands for 'tail' pseudo-instruction. Expected 1, got {}", ops.len()))
+            if ops.len() != 1 {
+                return Err(format!("Invalid number of operands for 'tail' pseudo-instruction. Expected 1, got {}", ops.len()));
             }
+            let (hi, lo) = split_hi_lo(ops.into_iter().next().unwrap(), "tail")?;
+            Ok(vec![
+                Statement { kind: StatementKind::Instruction("auipc".to_string(), vec![Operand::Register(6), hi]), line },
+                Statement { kind: StatementKind::Instruction("jalr".to_string(),  vec![Operand::Register(0), Operand::Register(6), lo]), line },
+            ])
         }
         // CSR pseudo-instructions
         "csrr" => {
@@ -412,6 +364,20 @@ fn expand_statement(statement: Statement) -> Result<Vec<Statement>, String> {
             }])
         }
         _ => Ok(vec![Statement { kind: StatementKind::Instruction(name, ops), line }]),
+    }
+}
+
+fn split_hi_lo(offset: Operand, pseudo_name: &str) -> Result<(Operand, Operand), String> {
+    match offset {
+        Operand::Immediate(imm) => Ok((
+            Operand::Immediate(((imm as i64 + 0x800) >> 12) as i32),
+            Operand::Immediate((imm << 20) >> 20),
+        )),
+        Operand::Label(label) => Ok((
+            Operand::Modifier(ModifierKind::Hi, label.clone()),
+            Operand::Modifier(ModifierKind::Lo, label),
+        )),
+        _ => Err(format!("Invalid operand for '{}': expected an immediate or label, got {}", pseudo_name, offset)),
     }
 }
 

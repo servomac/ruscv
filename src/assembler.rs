@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::parser::{Statement, StatementKind, Operand, MemoryOffset};
+use crate::parser::{Statement, StatementKind, Operand, MemoryOffset, Section};
 use crate::lexer::ModifierKind;
 use crate::symbols::SymbolTable;
 
@@ -23,13 +23,7 @@ pub struct DebugInfo {
 pub struct SourceMapping {
     pub raw_text: String,
     pub line: usize,
-    pub section: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Section {
-    Text,
-    Data,
+    pub section: Section,
 }
 
 pub struct Assembler {
@@ -63,7 +57,7 @@ impl Assembler {
             self.debug_info.address_to_source.insert(addr, SourceMapping {
                 line: stmt.line,
                 raw_text: stmt.to_string(),
-                section: format!("{:?}", current_section).to_lowercase(),
+                section: current_section,
             });
 
             match &stmt.kind {

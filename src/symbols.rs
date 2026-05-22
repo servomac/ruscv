@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::parser::{Statement, StatementKind, Operand};
+use crate::parser::{Statement, StatementKind, Operand, Section};
 
 pub struct SymbolTable {
     symbols: HashMap<String, u32>,
@@ -20,16 +20,19 @@ impl SymbolTable {
         let mut text_offset: u32 = 0;
         let mut data_offset: u32 = 0;
 
-        let mut current_section = ".text";
+        let mut current_section = Section::Text;
 
         for stmt in statements {
             match &stmt.kind {
-                StatementKind::Directive(name, _) if name == ".text" || name == ".data" => {
-                    current_section = name.as_str();
+                StatementKind::Directive(name, _) if name == ".text" => {
+                    current_section = Section::Text;
+                }
+                StatementKind::Directive(name, _) if name == ".data" => {
+                    current_section = Section::Data;
                 }
 
                 StatementKind::Label(name) => {
-                    let address = if current_section == ".text" {
+                    let address = if current_section == Section::Text {
                         self.text_base + text_offset
                     } else {
                         self.data_base + data_offset
@@ -39,16 +42,15 @@ impl SymbolTable {
                 }
 
                 StatementKind::Instruction(_, _) => {
-                    if current_section == ".text" {
+                    if current_section == Section::Text {
                         text_offset += 4;
                     } else {
-                        // Error it there is instructions in the data section
-                        return Err("Error: Instruction found on .data section".to_string());
+                        return Err("Instruction found in .data section".to_string());
                     }
                 }
 
                 StatementKind::Directive(name, operands) => {
-                    let current_pc = if current_section == ".text" {
+                    let current_pc = if current_section == Section::Text {
                         self.text_base + text_offset
                     } else {
                         self.data_base + data_offset
@@ -56,7 +58,7 @@ impl SymbolTable {
 
                     let size = self.calculate_directive_size(name, operands, current_pc)?;
 
-                    if current_section == ".text" {
+                    if current_section == Section::Text {
                         text_offset += size;
                     } else {
                         data_offset += size;
@@ -105,7 +107,7 @@ impl SymbolTable {
                     Err("Directive .space requires an immediate value".into())
                 }
             },
-            _ => Ok(0),
+            _ => Err(format!("Unknown directive '{}'", name)),
         }
     }
 
