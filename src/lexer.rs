@@ -162,7 +162,19 @@ pub fn tokenize(source: &str) -> Result<Vec<SpannedToken>, LexError> {
             }
             'A'..='Z' | 'a'..='z' | '_' => {
                 let start_column = column;
-                let identifier = consume_identifier(&mut chars, &mut column, char);
+                let mut identifier = consume_identifier(&mut chars, &mut column, char);
+                // Special-case: fence.i — the ".i" suffix cannot be consumed by consume_identifier
+                if identifier.eq_ignore_ascii_case("fence") && chars.peek() == Some(&'.') {
+                    chars.next(); // consume '.'
+                    column += 1;
+                    if let Some(&next) = chars.peek() {
+                        if next == 'i' || next == 'I' {
+                            chars.next(); // consume 'i'
+                            column += 1;
+                            identifier = "fence.i".to_string();
+                        }
+                    }
+                }
                 tokens.push(SpannedToken {
                     token: classify_identifier(&identifier, line, start_column)?,
                     line,
@@ -482,10 +494,14 @@ fn is_instruction(ident: &str) -> bool {
         "lw" | "sw" | "lb" | "lh" | "lbu" | "lhu" | "sb" | "sh" |
         "beq" | "bne" | "blt" | "bge" | "bltu" | "bgeu" |
         "jal" | "jalr" | "lui" | "auipc" | "ecall" | "ebreak" |
+        "fence" | "fence.i" |
+        "csrrw" | "csrrs" | "csrrc" | "csrrwi" | "csrrsi" | "csrrci" |
+        "mret" | "sret" | "wfi" |
         // Pseudoinstructions
         "la" | "nop" | "li" | "mv" | "not" | "neg" | "seqz" | "snez" | "sltz" | "sgtz" |
         "beqz" | "bnez" | "blez" | "bgez" | "bltz" | "bgtz" | "bgt" | "ble" | "bgtu" | "bleu" |
-        "j" | "jr" | "ret" |  "call" | "tail"
+        "j" | "jr" | "ret" |  "call" | "tail" |
+        "csrr" | "csrw" | "csrwi"
     )
 }
 

@@ -181,12 +181,66 @@ fn encode_instruction(name: &str, ops: &[Operand], sym_table: &SymbolTable, curr
         // J-type | Opcode: 0x6F
         "jal"   => encode_j_type(0x6F, ops, sym_table, current_pc),
 
+        // CSR instructions (Zicsr) | Opcode: 0x73
+        "csrrw"  => encode_csr(0x1, ops),
+        "csrrs"  => encode_csr(0x2, ops),
+        "csrrc"  => encode_csr(0x3, ops),
+        "csrrwi" => encode_csr_imm(0x5, ops),
+        "csrrsi" => encode_csr_imm(0x6, ops),
+        "csrrci" => encode_csr_imm(0x7, ops),
+
         // System and Miscellaneous
-        "ecall"  => Ok(0x00000073),
-        "ebreak" => Ok(0x00100073),
-        "fence"  => Ok(0x0000000F), // TODO Simplified for this example
+        "ecall"   => Ok(0x00000073),
+        "ebreak"  => Ok(0x00100073),
+        "fence"   => Ok(0x0FF0000F),
+        "fence.i" => Ok(0x0000100F),
+        "mret"    => Ok(0x30200073),
+        "sret"    => Ok(0x10200073),
+        "wfi"     => Ok(0x10500073),
 
         _ => Err(format!("Unsupported instruction '{}'", name)),
+    }
+}
+
+fn csr_addr(op: &Operand) -> Result<u32, String> {
+    match op {
+        Operand::Immediate(v) => Ok(*v as u32 & 0xFFF),
+        Operand::Label(name) => match name.as_str() {
+            "mstatus"  => Ok(0x300), "misa"     => Ok(0x301),
+            "mie"      => Ok(0x304), "mtvec"    => Ok(0x305),
+            "mscratch" => Ok(0x340), "mepc"     => Ok(0x341),
+            "mcause"   => Ok(0x342), "mtval"    => Ok(0x343),
+            "mip"      => Ok(0x344), "mhartid"  => Ok(0xF14),
+            "sstatus"  => Ok(0x100), "sie"      => Ok(0x104),
+            "stvec"    => Ok(0x105), "sscratch" => Ok(0x140),
+            "sepc"     => Ok(0x141), "scause"   => Ok(0x142),
+            "stval"    => Ok(0x143), "sip"      => Ok(0x144),
+            "cycle"    => Ok(0xC00), "time"     => Ok(0xC01),
+            "instret"  => Ok(0xC02),
+            _ => Err(format!("Unknown CSR '{}'", name)),
+        },
+        _ => Err("CSR operand must be an immediate or CSR name".to_string()),
+    }
+}
+
+fn encode_csr(funct3: u8, ops: &[Operand]) -> Result<u32, String> {
+    if let [Operand::Register(rd), csr_op, Operand::Register(rs1)] = ops {
+        let csr = csr_addr(csr_op)?;
+        Ok((csr << 20) | ((*rs1 as u32) << 15) | ((funct3 as u32) << 12) | ((*rd as u32) << 7) | 0x73)
+    } else {
+        Err("Invalid operands for CSR instruction: expected rd, csr, rs1".to_string())
+    }
+}
+
+fn encode_csr_imm(funct3: u8, ops: &[Operand]) -> Result<u32, String> {
+    if let [Operand::Register(rd), csr_op, Operand::Immediate(uimm)] = ops {
+        let csr = csr_addr(csr_op)?;
+        if *uimm < 0 || *uimm > 31 {
+            return Err(format!("CSR immediate {} out of range (0-31)", uimm));
+        }
+        Ok((csr << 20) | ((*uimm as u32) << 15) | ((funct3 as u32) << 12) | ((*rd as u32) << 7) | 0x73)
+    } else {
+        Err("Invalid operands for CSR immediate instruction: expected rd, csr, uimm".to_string())
     }
 }
 
@@ -663,6 +717,53 @@ mod tests {
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].line, 35);
         assert!(errors[0].message.contains("Unsupported directive '.float'"));
+    }
+
+    #[test]
+    fn test_csr_and_fence_instructions() {
+        let source = "csrrs a0, mhartid, x0\ncsrrw x0, mtvec, t0\nfence\nfence.i\nmret\nsret\nwfi";
+        let tokens = crate::lexer::tokenize(source).unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let expanded = crate::pseudo::expand(stmts).unwrap();
+        let sym_table = crate::symbols::SymbolTable::new(0, 0);
+        let mut asm = Assembler::new(0, 0);
+        asm.assemble(&expanded, &sym_table).expect("should assemble");
+
+        let words: Vec<u32> = asm.text_bin.chunks(4)
+            .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+            .collect();
+
+        assert_eq!(words[0], 0xF1402573, "csrrs a0, mhartid, x0");
+        assert_eq!(words[1], 0x30529073, "csrrw x0, mtvec, t0");
+        assert_eq!(words[2], 0x0FF0000F, "fence");
+        assert_eq!(words[3], 0x0000100F, "fence.i");
+        assert_eq!(words[4], 0x30200073, "mret");
+        assert_eq!(words[5], 0x10200073, "sret");
+        assert_eq!(words[6], 0x10500073, "wfi");
+    }
+
+    #[test]
+    fn test_csr_pseudo_instructions() {
+        let source = "csrr a0, mhartid\ncsrw mtvec, t0\ncsrwi mie, 8";
+        let tokens = crate::lexer::tokenize(source).unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let expanded = crate::pseudo::expand(stmts).unwrap();
+        let sym_table = crate::symbols::SymbolTable::new(0, 0);
+        let mut asm = Assembler::new(0, 0);
+        asm.assemble(&expanded, &sym_table).expect("should assemble");
+
+        let words: Vec<u32> = asm.text_bin.chunks(4)
+            .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+            .collect();
+
+        // csrr a0, mhartid → csrrs a0, mhartid (0xF14), x0
+        assert_eq!(words[0], 0xF1402573, "csrr a0, mhartid");
+        // csrw mtvec, t0 → csrrw x0, mtvec (0x305), t0
+        assert_eq!(words[1], 0x30529073, "csrw mtvec, t0");
+        // csrwi mie, 8 → csrrwi x0, mie (0x304), 8
+        assert_eq!(words[2], 0x30445073, "csrwi mie, 8");
     }
 
     #[test]

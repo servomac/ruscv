@@ -357,6 +357,60 @@ fn expand_statement(statement: Statement) -> Result<Vec<Statement>, String> {
                 Err(format!("Invalid number of operands for 'tail' pseudo-instruction. Expected 1, got {}", ops.len()))
             }
         }
+        // CSR pseudo-instructions
+        "csrr" => {
+            // csrr rd, csr  →  csrrs rd, csr, x0
+            if ops.len() != 2 {
+                return Err(format!("Invalid number of operands for 'csrr': expected 2, got {}", ops.len()));
+            }
+            let mut iter = ops.into_iter();
+            let rd = iter.next().unwrap();
+            let csr = iter.next().unwrap();
+            let rd_reg = match rd {
+                Operand::Register(n) => n,
+                _ => return Err(format!("Invalid first operand for 'csrr': expected register, got {}", rd)),
+            };
+            Ok(vec![Statement {
+                kind: StatementKind::Instruction("csrrs".to_string(), vec![
+                    Operand::Register(rd_reg), csr, Operand::Register(0),
+                ]),
+                line,
+            }])
+        }
+        "csrw" => {
+            // csrw csr, rs  →  csrrw x0, csr, rs
+            if ops.len() != 2 {
+                return Err(format!("Invalid number of operands for 'csrw': expected 2, got {}", ops.len()));
+            }
+            let mut iter = ops.into_iter();
+            let csr = iter.next().unwrap();
+            let rs = iter.next().unwrap();
+            let rs_reg = match rs {
+                Operand::Register(n) => n,
+                _ => return Err(format!("Invalid second operand for 'csrw': expected register, got {}", rs)),
+            };
+            Ok(vec![Statement {
+                kind: StatementKind::Instruction("csrrw".to_string(), vec![
+                    Operand::Register(0), csr, Operand::Register(rs_reg),
+                ]),
+                line,
+            }])
+        }
+        "csrwi" => {
+            // csrwi csr, uimm  →  csrrwi x0, csr, uimm
+            if ops.len() != 2 {
+                return Err(format!("Invalid number of operands for 'csrwi': expected 2, got {}", ops.len()));
+            }
+            let mut iter = ops.into_iter();
+            let csr = iter.next().unwrap();
+            let uimm = iter.next().unwrap();
+            Ok(vec![Statement {
+                kind: StatementKind::Instruction("csrrwi".to_string(), vec![
+                    Operand::Register(0), csr, uimm,
+                ]),
+                line,
+            }])
+        }
         _ => Ok(vec![Statement { kind: StatementKind::Instruction(name, ops), line }]),
     }
 }
