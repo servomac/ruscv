@@ -1,4 +1,5 @@
 mod config;
+mod elf_loader;
 mod lexer;
 mod parser;
 mod symbols;
