@@ -76,7 +76,7 @@ impl<'a> App<'a> {
         editor.set_block(
             ratatui::widgets::Block::default()
                 .borders(ratatui::widgets::Borders::ALL)
-                .title("Code Editor (F2: Load, F5: Run, F10: Step, Tab: Switch)"),
+                .title("Code Editor"),
         );
 
         let processor = Processor::new(config::TEXT_BASE, config::DATA_BASE, config::STACK_BASE, config::STACK_SIZE);
@@ -397,12 +397,12 @@ mod ui {
             sep.clone(),
             Span::styled(fmt_label, val),
             sep.clone(),
-            Span::styled("F2", key), Span::styled(":Load ", dim),
-            Span::styled("F5", key), Span::styled(":Run ", dim),
-            Span::styled("F10", key), Span::styled(":Step ", dim),
-            Span::styled("F9", key), Span::styled(":Fmt ", dim),
-            Span::styled("Tab", key), Span::styled(":Pane ", dim),
-            Span::styled("Esc", key), Span::styled(":Quit", dim),
+            Span::styled("F2", key), Span::styled(" Load  ", dim),
+            Span::styled("F5", key), Span::styled(" Run  ", dim),
+            Span::styled("F10", key), Span::styled(" Step  ", dim),
+            Span::styled("F9", key), Span::styled(" Number format  ", dim),
+            Span::styled("Tab", key), Span::styled(" Switch pane  ", dim),
+            Span::styled("Esc", key), Span::styled(" Quit", dim),
         ]);
         let top_bar = Paragraph::new(top_line)
             .block(Block::default().borders(Borders::ALL));
@@ -424,7 +424,7 @@ mod ui {
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(editor_style)
-                .title("Code Editor (F2: Load, F5: Run, F10: Step, Tab: Switch)"),
+                .title("Code Editor"),
         );
         if app.error_line.is_some() {
             app.editor.set_cursor_line_style(Style::default().bg(Color::Red).fg(Color::White));
@@ -433,7 +433,7 @@ mod ui {
         } else {
             app.editor.set_cursor_line_style(Style::default());
         }
-        f.render_widget(app.editor.widget(), middle_chunks[0]);
+        f.render_widget(&app.editor, middle_chunks[0]);
 
         // Registers
         let regs = app.processor.registers();

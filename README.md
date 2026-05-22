@@ -6,6 +6,8 @@ A RISC-V Assembler and Emulator implementation in Rust.
 
 `ruscv` is a project aimed at providing a modular and extensible platform for assembling RISC-V assembly code and emulating its execution on an RV32I-compatible virtual processor.
 
+![ruscv TUI](img/tui.png)
+
 ## Features
 
 - **Interactive TUI**: Real-time visualization of the processor state, memory, and logs.
