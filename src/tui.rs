@@ -13,7 +13,7 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
-use tui_textarea::TextArea;
+use tui_textarea::{TextArea, CursorMove};
 
 #[derive(Debug, PartialEq)]
 pub enum Pane {
@@ -46,7 +46,11 @@ pub struct App<'a> {
     pub registers_scroll: u16,
     pub memory_scroll: u32,
     pub logs: Vec<String>,
+    pub logs_scroll: u16,
     pub should_quit: bool,
+    pub debug_info: Option<assembler::DebugInfo>,
+    pub prev_registers: [u32; config::NUM_REGISTERS],
+    pub error_line: Option<usize>,
 }
 
 impl<'a> App<'a> {
@@ -74,8 +78,11 @@ impl<'a> App<'a> {
                 .title("Code Editor (F2: Load, F5: Run, F10: Step, Tab: Switch)"),
         );
 
+        let processor = Processor::new(config::TEXT_BASE, config::DATA_BASE, config::STACK_BASE, config::STACK_SIZE);
+        let prev_registers = *processor.registers();
+
         App {
-            processor: Processor::new(config::TEXT_BASE, config::DATA_BASE, config::STACK_BASE, config::STACK_SIZE),
+            processor,
             editor,
             active_pane: Pane::Editor,
             number_format: NumFormat::Hex,
@@ -83,7 +90,11 @@ impl<'a> App<'a> {
             registers_scroll: 0,
             memory_scroll: config::TEXT_BASE,
             logs,
+            logs_scroll: u16::MAX,
             should_quit: false,
+            debug_info: None,
+            prev_registers,
+            error_line: None,
         }
     }
 }
@@ -117,13 +128,19 @@ fn compile_and_load(app: &mut App) -> Result<(), String> {
 
     let tokens = match lexer::tokenize(&source) {
         Ok(tokens) => tokens,
-        Err(e) => return Err(format!("Line {}: {}", e.line, e)),
+        Err(e) => {
+            jump_to_error_line(app, e.line);
+            return Err(format!("Line {}: {}", e.line, e));
+        }
     };
 
     let mut parser = parser::Parser::new(tokens);
     let statements = match parser.parse() {
         Ok(stmt) => stmt,
-        Err(e) => return Err(format!("Line {}: {}", e.line, e)),
+        Err(e) => {
+            jump_to_error_line(app, e.line);
+            return Err(format!("Line {}: {}", e.line, e));
+        }
     };
 
     let statements = pseudo::expand(statements).map_err(|e| format!("Pseudo-instruction error: {}", e))?;
@@ -133,17 +150,23 @@ fn compile_and_load(app: &mut App) -> Result<(), String> {
 
     let mut assembler = assembler::Assembler::new(config::TEXT_BASE, config::DATA_BASE);
     if let Err(errors) = assembler.assemble(&statements, &symbol_table) {
+        let first_line = errors.first().map(|e| e.line).unwrap_or(0);
         let mut msg = String::new();
-        for err in errors {
+        for err in &errors {
             msg.push_str(&format!("Line {}: {}\n", err.line, err.message));
         }
+        jump_to_error_line(app, first_line);
         return Err(msg);
     }
 
+    app.error_line = None;
     app.processor = Processor::new(config::TEXT_BASE, config::DATA_BASE, config::STACK_BASE, config::STACK_SIZE);
     app.processor.load(&assembler.text_bin, &assembler.data_bin);
+    app.prev_registers = *app.processor.registers();
+    app.debug_info = Some(assembler.debug_info);
     app.logs.push("Assembly successful! CPU reset and loaded.".to_string());
-    app.memory_scroll = config::TEXT_BASE; // scroll to text base by default
+    app.logs_scroll = u16::MAX;
+    app.memory_scroll = config::TEXT_BASE;
     Ok(())
 }
 
@@ -179,6 +202,7 @@ fn run_app<B: ratatui::backend::Backend>(
                     if app.mode == RunMode::Editing {
                         if let Err(e) = compile_and_load(&mut app) {
                             app.logs.push(format!("Compile Error:\n{}", e));
+                            app.logs_scroll = u16::MAX;
                         }
                     }
                     continue;
@@ -197,20 +221,24 @@ fn run_app<B: ratatui::backend::Backend>(
                     if app.mode == RunMode::Editing {
                         if let Err(e) = compile_and_load(&mut app) {
                             app.logs.push(format!("Compile Error:\n{}", e));
+                            app.logs_scroll = u16::MAX;
                             continue;
                         }
                     }
+                    app.prev_registers = *app.processor.registers();
                     app.mode = RunMode::Running;
                     loop {
                         match app.processor.step() {
                             Ok(_) => {}
                             Err(e) => {
-                                app.logs.push(format!("Halted: {:?}", e));
+                                app.logs.push(format!("Halted: {}", format_step_error(&e)));
+                                app.logs_scroll = u16::MAX;
                                 app.mode = RunMode::Editing;
                                 break;
                             }
                         }
                     }
+                    move_cursor_to_pc(&mut app);
                     continue;
                 }
 
@@ -218,14 +246,19 @@ fn run_app<B: ratatui::backend::Backend>(
                     if app.mode == RunMode::Editing {
                         if let Err(e) = compile_and_load(&mut app) {
                             app.logs.push(format!("Compile Error:\n{}", e));
+                            app.logs_scroll = u16::MAX;
                             continue;
                         }
                         app.mode = RunMode::Stepping;
                     }
+                    app.prev_registers = *app.processor.registers();
                     match app.processor.step() {
-                        Ok(_) => {}
+                        Ok(_) => {
+                            move_cursor_to_pc(&mut app);
+                        }
                         Err(e) => {
-                            app.logs.push(format!("Halted: {:?}", e));
+                            app.logs.push(format!("Halted: {}", format_step_error(&e)));
+                            app.logs_scroll = u16::MAX;
                             app.mode = RunMode::Editing;
                         }
                     }
@@ -236,6 +269,7 @@ fn run_app<B: ratatui::backend::Backend>(
                     Pane::Editor => {
                         app.editor.input(key);
                         app.mode = RunMode::Editing;
+                        app.error_line = None;
                     }
                     Pane::Registers => {
                         match key.code {
@@ -255,10 +289,42 @@ fn run_app<B: ratatui::backend::Backend>(
                             _ => {}
                         }
                     }
-                    _ => {}
+                    Pane::Logs => {
+                        match key.code {
+                            KeyCode::Up => app.logs_scroll = app.logs_scroll.saturating_sub(1),
+                            KeyCode::Down => app.logs_scroll = app.logs_scroll.saturating_add(1),
+                            _ => {}
+                        }
+                    }
                 }
             }
         }
+    }
+}
+
+fn jump_to_error_line(app: &mut App, line: usize) {
+    app.error_line = Some(line);
+    if line > 0 {
+        app.editor.move_cursor(CursorMove::Jump((line - 1) as u16, 0));
+    }
+}
+
+fn move_cursor_to_pc(app: &mut App) {
+    if let Some(ref debug_info) = app.debug_info {
+        if let Some(mapping) = debug_info.address_to_source.get(&app.processor.pc()) {
+            if mapping.line > 0 {
+                app.editor.move_cursor(CursorMove::Jump((mapping.line - 1) as u16, 0));
+            }
+        }
+    }
+}
+
+fn format_step_error(e: &crate::processor::StepError) -> String {
+    use crate::processor::StepError;
+    match e {
+        StepError::Ebreak => "ebreak".to_string(),
+        StepError::IllegalInstruction => "illegal instruction".to_string(),
+        StepError::MemoryFault(f) => format!("memory fault: {:?}", f),
     }
 }
 
@@ -266,11 +332,18 @@ mod ui {
     use super::*;
     use ratatui::{
         layout::{Constraint, Direction, Layout},
-        style::{Color, Style},
+        style::{Color, Modifier, Style},
         text::{Line, Span},
         widgets::{Block, Borders, Paragraph},
         Frame,
     };
+
+    const ABI_NAMES: [&str; 32] = [
+        "zero", "ra",  "sp",  "gp",  "tp",  "t0",  "t1",  "t2",
+        "s0",   "s1",  "a0",  "a1",  "a2",  "a3",  "a4",  "a5",
+        "a6",   "a7",  "s2",  "s3",  "s4",  "s5",  "s6",  "s7",
+        "s8",   "s9",  "s10", "s11", "t3",  "t4",  "t5",  "t6",
+    ];
 
     pub fn draw(f: &mut Frame, app: &mut App) {
         let chunks = Layout::default()
@@ -308,20 +381,37 @@ mod ui {
                 .border_style(editor_style)
                 .title("Code Editor (F2: Load, F5: Run, F10: Step, Tab: Switch)"),
         );
+        if app.error_line.is_some() {
+            app.editor.set_cursor_line_style(Style::default().bg(Color::Red).fg(Color::White));
+        } else if app.mode == RunMode::Stepping {
+            app.editor.set_cursor_line_style(Style::default().bg(Color::DarkGray));
+        } else {
+            app.editor.set_cursor_line_style(Style::default());
+        }
         f.render_widget(app.editor.widget(), middle_chunks[0]);
 
         // Registers
-        let mut reg_str = String::new();
         let regs = app.processor.registers();
+        let stepping = app.mode != RunMode::Editing;
+        let mut reg_lines: Vec<Line> = Vec::new();
         for i in 0..32 {
-            match app.number_format {
-                NumFormat::Hex => reg_str.push_str(&format!("x{:<2}: 0x{:08x}\n", i, regs[i])),
-                NumFormat::Binary => reg_str.push_str(&format!("x{:<2}: 0b{:032b}\n", i, regs[i])),
-                NumFormat::Decimal => reg_str.push_str(&format!("x{:<2}: {:<10}\n", i, regs[i] as i32)),
-            }
+            let value_str = match app.number_format {
+                NumFormat::Hex     => format!("0x{:08x}", regs[i]),
+                NumFormat::Binary  => format!("0b{:032b}", regs[i]),
+                NumFormat::Decimal => format!("{:>11}", regs[i] as i32),
+            };
+            let label = format!("{:>3} {:4}", format!("x{}", i), ABI_NAMES[i]);
+            let text = format!("{}  {}", label, value_str);
+            let changed = stepping && regs[i] != app.prev_registers[i];
+            let style = if changed {
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            reg_lines.push(Line::from(Span::styled(text, style)));
         }
         let regs_style = if app.active_pane == Pane::Registers { Style::default().fg(Color::Yellow) } else { Style::default() };
-        let regs_p = Paragraph::new(reg_str)
+        let regs_p = Paragraph::new(reg_lines)
             .scroll((app.registers_scroll, 0))
             .block(
             Block::default()
@@ -390,14 +480,22 @@ mod ui {
         );
         f.render_widget(mem_p, middle_chunks[2]);
 
-        // Logs
-        let logs_style = if app.active_pane == Pane::Logs { Style::default().fg(Color::Yellow) } else { Style::default() };
+        // Logs — compute scroll with auto-scroll-to-bottom when logs_scroll == u16::MAX
         let logs_text = app.logs.join("\n");
-        let logs = Paragraph::new(logs_text).block(
+        let total_log_lines: u16 = app.logs.iter()
+            .map(|l| l.lines().count().max(1))
+            .sum::<usize>() as u16;
+        let logs_visible = chunks[2].height.saturating_sub(2);
+        let max_scroll = total_log_lines.saturating_sub(logs_visible);
+        app.logs_scroll = app.logs_scroll.min(max_scroll);
+        let logs_style = if app.active_pane == Pane::Logs { Style::default().fg(Color::Yellow) } else { Style::default() };
+        let logs = Paragraph::new(logs_text)
+            .scroll((app.logs_scroll, 0))
+            .block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(logs_style)
-                .title("Execution Logs"),
+                .title("Execution Logs (↑↓ to scroll)"),
         );
         f.render_widget(logs, chunks[2]);
     }
