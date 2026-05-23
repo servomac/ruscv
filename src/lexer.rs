@@ -501,7 +501,7 @@ fn is_instruction(ident: &str) -> bool {
         "la" | "nop" | "li" | "mv" | "not" | "neg" | "seqz" | "snez" | "sltz" | "sgtz" |
         "beqz" | "bnez" | "blez" | "bgez" | "bltz" | "bgtz" | "bgt" | "ble" | "bgtu" | "bleu" |
         "j" | "jr" | "ret" |  "call" | "tail" |
-        "csrr" | "csrw" | "csrwi"
+        "csrr" | "csrw" | "csrwi" | "csrs" | "csrc" | "csrsi" | "csrci"
     )
 }
 

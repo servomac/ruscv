@@ -55,6 +55,10 @@ static PSEUDO_TABLE: &[(&str, Expansion)] = &[
     ("csrr",  Fixed { base: "csrrs",  arity: 2, out: &[In(0), In(1), Reg(0)]    }),
     ("csrw",  Fixed { base: "csrrw",  arity: 2, out: &[Reg(0), In(0), In(1)]    }),
     ("csrwi", Fixed { base: "csrrwi", arity: 2, out: &[Reg(0), In(0), In(1)]    }),
+    ("csrs",  Fixed { base: "csrrs",  arity: 2, out: &[Reg(0), In(0), In(1)]    }),
+    ("csrc",  Fixed { base: "csrrc",  arity: 2, out: &[Reg(0), In(0), In(1)]    }),
+    ("csrsi", Fixed { base: "csrrsi", arity: 2, out: &[Reg(0), In(0), In(1)]    }),
+    ("csrci", Fixed { base: "csrrci", arity: 2, out: &[Reg(0), In(0), In(1)]    }),
     // Complex expansions that need runtime logic
     ("li",    Custom(expand_li)),
     ("la",    Custom(expand_la)),

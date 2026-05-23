@@ -700,6 +700,31 @@ mod tests {
     }
 
     #[test]
+    fn test_csr_set_clear_pseudo_instructions() {
+        let source = "csrs mstatus, t0\ncsrc mstatus, t0\ncsrsi mie, 8\ncsrci mie, 8";
+        let tokens = crate::lexer::tokenize(source).unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let expanded = crate::pseudo::expand(stmts).unwrap();
+        let sym_table = crate::symbols::SymbolTable::new(0, 0);
+        let asm = Assembler::new(0, 0);
+        let program = asm.assemble(&expanded, &sym_table).expect("should assemble");
+
+        let words: Vec<u32> = program.text_bin.chunks(4)
+            .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+            .collect();
+
+        // csrs mstatus, t0  → csrrs x0, mstatus (0x300), t0 (x5)
+        assert_eq!(words[0], 0x3002A073, "csrs mstatus, t0");
+        // csrc mstatus, t0  → csrrc x0, mstatus (0x300), t0 (x5)
+        assert_eq!(words[1], 0x3002B073, "csrc mstatus, t0");
+        // csrsi mie, 8      → csrrsi x0, mie (0x304), 8
+        assert_eq!(words[2], 0x30446073, "csrsi mie, 8");
+        // csrci mie, 8      → csrrci x0, mie (0x304), 8
+        assert_eq!(words[3], 0x30447073, "csrci mie, 8");
+    }
+
+    #[test]
     fn test_invalid_directive_operands() {
         let (assembler, sym_table) = setup();
         let statements = vec![
