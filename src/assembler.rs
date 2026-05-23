@@ -421,7 +421,9 @@ fn encode_u_type(
 ) -> Result<u32, String> {
     if let [Operand::Register(rd), imm_op] = ops {
         let val = resolve_any_immediate(imm_op, sym_table)?;
-        // TODO review this because i'm not completely sure how the U-immediate is represented in the instruction encoding
+        if val as u32 > 0xFFFFF {
+            return Err(format!("Immediate value {} out of range for 20-bit U-type field (0..=0xFFFFF)", val));
+        }
         let imm_u32 = val as u32;
         Ok((imm_u32 << 12) | ((*rd as u32) << 7) | (opcode as u32))
     } else {
@@ -466,7 +468,12 @@ fn emit_data_bytes(kind: &DirectiveKind, ops: &[Operand]) -> Result<Vec<u8>, Str
         DirectiveKind::Byte => {
             for op in ops {
                 match op {
-                    Operand::Immediate(val) => bytes.push(*val as u8),
+                    Operand::Immediate(val) => {
+                        if *val < -128 || *val > 255 {
+                            return Err(format!(".byte value {} out of range (-128..=255)", val));
+                        }
+                        bytes.push(*val as u8);
+                    }
                     _ => return Err("Invalid operand for .byte: expected immediate".to_string()),
                 }
             }
@@ -474,7 +481,12 @@ fn emit_data_bytes(kind: &DirectiveKind, ops: &[Operand]) -> Result<Vec<u8>, Str
         DirectiveKind::Half => {
             for op in ops {
                 match op {
-                    Operand::Immediate(val) => bytes.extend_from_slice(&(*val as u16).to_le_bytes()),
+                    Operand::Immediate(val) => {
+                        if *val < -32768 || *val > 65535 {
+                            return Err(format!(".half value {} out of range (-32768..=65535)", val));
+                        }
+                        bytes.extend_from_slice(&(*val as u16).to_le_bytes());
+                    }
                     _ => return Err("Invalid operand for .half: expected immediate".to_string()),
                 }
             }
@@ -1025,5 +1037,83 @@ mod tests {
         let errors = result.unwrap_err();
         assert_eq!(errors.len(), 1);
         assert!(errors[0].message.contains("out of range for 12-bit field"));
+    }
+
+    #[test]
+    fn test_u_type_immediate_overflow() {
+        let (assembler, sym_table) = setup();
+        let stmts = vec![Statement {
+            kind: StatementKind::Instruction("lui".to_string(), vec![
+                Operand::Register(1),
+                Operand::Immediate(0x100000), // one past the 20-bit max
+            ]),
+            line: 1,
+        }];
+        let result = assembler.assemble(&stmts, &sym_table);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("out of range for 20-bit U-type field"));
+    }
+
+    #[test]
+    fn test_u_type_immediate_max_valid() {
+        let (assembler, sym_table) = setup();
+        let stmts = vec![Statement {
+            kind: StatementKind::Instruction("lui".to_string(), vec![
+                Operand::Register(1),
+                Operand::Immediate(0xFFFFF), // exactly 20-bit max
+            ]),
+            line: 1,
+        }];
+        assert!(assembler.assemble(&stmts, &sym_table).is_ok());
+    }
+
+    #[test]
+    fn test_byte_directive_overflow() {
+        let (assembler, sym_table) = setup();
+        let stmts = vec![Statement {
+            kind: StatementKind::Directive(DirectiveKind::Byte, vec![
+                Operand::Immediate(256), // one past unsigned byte max
+            ]),
+            line: 1,
+        }];
+        let result = assembler.assemble(&stmts, &sym_table);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains(".byte value") && errors[0].message.contains("out of range"));
+    }
+
+    #[test]
+    fn test_byte_directive_negative_underflow() {
+        let (assembler, sym_table) = setup();
+        let stmts = vec![Statement {
+            kind: StatementKind::Directive(DirectiveKind::Byte, vec![
+                Operand::Immediate(-129), // one past signed byte min
+            ]),
+            line: 1,
+        }];
+        let result = assembler.assemble(&stmts, &sym_table);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains(".byte value") && errors[0].message.contains("out of range"));
+    }
+
+    #[test]
+    fn test_half_directive_overflow() {
+        let (assembler, sym_table) = setup();
+        let stmts = vec![Statement {
+            kind: StatementKind::Directive(DirectiveKind::Half, vec![
+                Operand::Immediate(65536), // one past unsigned halfword max
+            ]),
+            line: 1,
+        }];
+        let result = assembler.assemble(&stmts, &sym_table);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains(".half value") && errors[0].message.contains("out of range"));
     }
 }
