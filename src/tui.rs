@@ -46,6 +46,8 @@ pub struct App<'a> {
     pub should_quit: bool,
     pub error_line: Option<usize>,
     pub memory_pane_height: u16,
+    // Holds any UART bytes not yet terminated by a newline.
+    uart_leftover: String,
 }
 
 impl<'a> App<'a> {
@@ -80,6 +82,7 @@ impl<'a> App<'a> {
             should_quit: false,
             error_line: None,
             memory_pane_height: 20,
+            uart_leftover: String::new(),
         }
     }
 }
@@ -133,6 +136,35 @@ fn compile_and_load(app: &mut App) -> Result<(), String> {
             }
             jump_to_error_line(app, first_line);
             Err(msg)
+        }
+    }
+}
+
+// Drain UART output into the logs pane. Complete lines (terminated by '\n') are pushed
+// immediately. Incomplete lines are held in `leftover` until a newline arrives or
+// `flush_partial` is true (used at halt, so the last line is never silently dropped).
+fn drain_uart_to_logs(app: &mut App, flush_partial: bool) {
+    let bytes = app.session.drain_uart();
+    if bytes.is_empty() {
+        return;
+    }
+    app.uart_leftover.push_str(&String::from_utf8_lossy(&bytes));
+    // Take ownership of the accumulated text so we can split and write back freely.
+    let text = std::mem::take(&mut app.uart_leftover);
+    let mut lines = text.split('\n').peekable();
+    while let Some(line) = lines.next() {
+        if lines.peek().is_some() {
+            // A '\n' follows — this is a complete line.
+            app.logs.push(format!("UART: {}", line));
+            app.logs_scroll = u16::MAX;
+        } else {
+            // Last segment: no '\n' yet — keep it or flush depending on caller.
+            if flush_partial && !line.is_empty() {
+                app.logs.push(format!("UART: {}", line));
+                app.logs_scroll = u16::MAX;
+            } else {
+                app.uart_leftover = line.to_string();
+            }
         }
     }
 }
@@ -196,6 +228,7 @@ where
                     }
                     app.mode = RunMode::Running;
                     let halt = app.session.run_to_halt();
+                    drain_uart_to_logs(&mut app, true);
                     app.logs.push(format!("Halted: {}", format_step_error(&halt)));
                     app.logs_scroll = u16::MAX;
                     app.mode = RunMode::Editing;
@@ -215,10 +248,12 @@ where
                     }
                     match app.session.step() {
                         Ok(_) => {
+                            drain_uart_to_logs(&mut app, false);
                             move_cursor_to_pc(&mut app);
                             maybe_follow_pc_in_memory(&mut app);
                         }
                         Err(e) => {
+                            drain_uart_to_logs(&mut app, true);
                             app.logs.push(format!("Halted: {}", format_step_error(&e)));
                             app.logs_scroll = u16::MAX;
                             app.mode = RunMode::Editing;
