@@ -6,14 +6,14 @@ use crate::pseudo;
 use crate::symbols;
 use crate::assembler;
 
-use crossterm::{
+use ratatui::crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
-use tui_textarea::{TextArea, CursorMove};
+use ratatui_textarea::{TextArea, CursorMove};
 
 #[derive(Debug, PartialEq)]
 pub enum Pane {
@@ -175,7 +175,10 @@ fn compile_and_load(app: &mut App) -> Result<(), String> {
 fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     mut app: App,
-) -> io::Result<()> {
+) -> io::Result<()>
+where
+    io::Error: From<B::Error>,
+{
     loop {
         terminal.draw(|f| ui::draw(f, &mut app))?;
 
