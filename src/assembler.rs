@@ -528,10 +528,16 @@ mod tests {
     use super::*;
     use crate::config;
 
+    fn setup() -> (Assembler, SymbolTable) {
+        (
+            Assembler::new(config::TEXT_BASE, config::DATA_BASE),
+            SymbolTable::new(config::TEXT_BASE, config::DATA_BASE),
+        )
+    }
+
     #[test]
     fn test_assemble_simple_program() {
-        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
-        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
+        let (assembler, sym_table) = setup();
         let statements = vec![
             Statement {
                 kind: StatementKind::Instruction("add".to_string(), vec![
@@ -570,8 +576,7 @@ mod tests {
 
     #[test]
     fn test_unsupported_instruction() {
-        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
-        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
+        let (assembler, sym_table) = setup();
         let statements = vec![
             Statement {
                 kind: StatementKind::Instruction("mul".to_string(), vec![
@@ -592,121 +597,32 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_r_type_operands() {
-        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
-        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
-        let statements = vec![
-            Statement {
-                kind: StatementKind::Instruction("add".to_string(), vec![
-                    Operand::Register(1),
-                    Operand::Register(2),
-                    Operand::Immediate(5), // Should be a register
-                ]),
-                line: 10,
-            },
+    fn test_invalid_operands() {
+        let cases: Vec<(&str, Vec<Operand>, usize, &str)> = vec![
+            ("add", vec![Operand::Register(1), Operand::Register(2), Operand::Immediate(5)],    10, "Invalid operands for R-type"),
+            ("lw",  vec![Operand::Register(1), Operand::Register(2), Operand::Register(3)],     15, "Invalid operands for I-type"),
+            ("sw",  vec![Operand::Register(1), Operand::Register(2)],                            20, "Invalid operands for S-type"),
+            ("beq", vec![Operand::Register(1), Operand::Immediate(5), Operand::Immediate(100)], 25, "Invalid operands for B-type"),
+            ("jal", vec![Operand::Immediate(100)],                                              30, "Invalid operands for J-type"),
         ];
-
-        let result = assembler.assemble(&statements, &sym_table);
-        assert!(result.is_err());
-        let errors = result.unwrap_err();
-        assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].line, 10);
-        assert!(errors[0].message.contains("Invalid operands for R-type"));
-    }
-
-    #[test]
-    fn test_invalid_i_type_operands() {
-        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
-        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
-        let statements = vec![
-            Statement {
-                kind: StatementKind::Instruction("lw".to_string(), vec![
-                    Operand::Register(1),
-                    Operand::Register(2),
-                    Operand::Register(3), // Should be immediate
-                ]),
-                line: 15,
-            },
-        ];
-
-        let result = assembler.assemble(&statements, &sym_table);
-        assert!(result.is_err());
-        let errors = result.unwrap_err();
-        assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].line, 15);
-        assert!(errors[0].message.contains("Invalid operands for I-type"));
-    }
-
-    #[test]
-    fn test_invalid_s_type_operands() {
-        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
-        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
-        let statements = vec![
-            Statement {
-                kind: StatementKind::Instruction("sw".to_string(), vec![
-                    Operand::Register(1),
-                    Operand::Register(2), // Should be memory operand
-                ]),
-                line: 20,
-            },
-        ];
-
-        let result = assembler.assemble(&statements, &sym_table);
-        assert!(result.is_err());
-        let errors = result.unwrap_err();
-        assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].line, 20);
-        assert!(errors[0].message.contains("Invalid operands for S-type"));
-    }
-
-    #[test]
-    fn test_invalid_b_type_operands() {
-        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
-        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
-        let statements = vec![
-            Statement {
-                kind: StatementKind::Instruction("beq".to_string(), vec![
-                    Operand::Register(1),
-                    Operand::Immediate(5), // Should be register
-                    Operand::Immediate(100),
-                ]),
-                line: 25,
-            },
-        ];
-
-        let result = assembler.assemble(&statements, &sym_table);
-        assert!(result.is_err());
-        let errors = result.unwrap_err();
-        assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].line, 25);
-        assert!(errors[0].message.contains("Invalid operands for B-type"));
-    }
-
-    #[test]
-    fn test_invalid_j_type_operands() {
-        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
-        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
-        let statements = vec![
-            Statement {
-                kind: StatementKind::Instruction("jal".to_string(), vec![
-                    Operand::Immediate(100), // Missing destination register
-                ]),
-                line: 30,
-            },
-        ];
-
-        let result = assembler.assemble(&statements, &sym_table);
-        assert!(result.is_err());
-        let errors = result.unwrap_err();
-        assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].line, 30);
-        assert!(errors[0].message.contains("Invalid operands for J-type"));
+        for (mnemonic, ops, line, msg) in cases {
+            let (assembler, sym_table) = setup();
+            let stmts = vec![Statement {
+                kind: StatementKind::Instruction(mnemonic.to_string(), ops),
+                line,
+            }];
+            let result = assembler.assemble(&stmts, &sym_table);
+            assert!(result.is_err(), "Expected error for '{}'", mnemonic);
+            let errors = result.unwrap_err();
+            assert_eq!(errors.len(), 1, "For '{}'", mnemonic);
+            assert_eq!(errors[0].line, line, "For '{}'", mnemonic);
+            assert!(errors[0].message.contains(msg), "For '{}': got '{}'", mnemonic, errors[0].message);
+        }
     }
 
     #[test]
     fn test_unsupported_directive() {
-        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
-        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
+        let (assembler, sym_table) = setup();
         let statements = vec![
             Statement {
                 kind: StatementKind::Directive(DirectiveKind::Unknown(".float".to_string()), vec![
@@ -773,8 +689,7 @@ mod tests {
 
     #[test]
     fn test_invalid_directive_operands() {
-        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
-        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
+        let (assembler, sym_table) = setup();
         let statements = vec![
             Statement {
                 kind: StatementKind::Directive(DirectiveKind::Word, vec![
@@ -794,8 +709,7 @@ mod tests {
 
     #[test]
     fn test_multiple_errors() {
-        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
-        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
+        let (assembler, sym_table) = setup();
         let statements = vec![
             Statement {
                 kind: StatementKind::Instruction("mul".to_string(), vec![
@@ -896,8 +810,7 @@ mod tests {
 
     #[test]
     fn test_assemble_i_type_instruction() {
-        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
-        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
+        let (assembler, sym_table) = setup();
         let statements = vec![
             Statement {
                 kind: StatementKind::Instruction("addi".to_string(), vec![
@@ -927,8 +840,9 @@ mod tests {
 
     #[test]
     fn test_assemble_i_type_instruction_with_negative_immediate() {
-        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
-        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
+        // addi x19, x20, -8: bytes 0-2 are identical to the +8 case because the
+        // low 4 bits of ±8 are the same (1000); only byte 3 (imm[11:4]) differs.
+        let (assembler, sym_table) = setup();
         let statements = vec![
             Statement {
                 kind: StatementKind::Instruction("addi".to_string(), vec![
@@ -958,8 +872,7 @@ mod tests {
 
     #[test]
     fn test_s_instruction_with_unknown_label() {
-        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
-        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
+        let (assembler, sym_table) = setup();
         let statements = vec![
             Statement {
                 kind: StatementKind::Instruction("sw".to_string(), vec![
@@ -983,8 +896,7 @@ mod tests {
 
     #[test]
     fn test_encoding_of_i_shift_instruction() {
-        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
-        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
+        let (assembler, sym_table) = setup();
         let statements = vec![
             Statement {
                 kind: StatementKind::Instruction("srai".to_string(), vec![
@@ -1013,8 +925,7 @@ mod tests {
 
     #[test]
     fn test_encoding_of_b_type_instruction() {
-        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
-        let mut sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
+        let (assembler, mut sym_table) = setup();
         sym_table.add_label("target".to_string(), config::TEXT_BASE + 0x10).unwrap();
         let statements = vec![
             Statement {
@@ -1044,8 +955,7 @@ mod tests {
 
     #[test]
     fn test_encoding_of_u_type_instruction() {
-        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
-        let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
+        let (assembler, sym_table) = setup();
         let statements = vec![
             Statement {
                 kind: StatementKind::Instruction("lui".to_string(), vec![
@@ -1073,8 +983,7 @@ mod tests {
 
     #[test]
     fn test_extended_directives() {
-        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
-        let mut sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
+        let (assembler, mut sym_table) = setup();
         let source = r#"
             .data
             .byte 1, 2, 3
@@ -1098,5 +1007,23 @@ mod tests {
         assert_eq!(program.data_bin[11..18], *b"RISC-V\0");
         assert_eq!(program.data_bin[18..20], [0, 0]);
         assert_eq!(program.data_bin[20..24], [42, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_i_type_immediate_overflow() {
+        let (assembler, sym_table) = setup();
+        let stmts = vec![Statement {
+            kind: StatementKind::Instruction("addi".to_string(), vec![
+                Operand::Register(1),
+                Operand::Register(2),
+                Operand::Immediate(2048), // one past the 12-bit signed max
+            ]),
+            line: 1,
+        }];
+        let result = assembler.assemble(&stmts, &sym_table);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("out of range for 12-bit field"));
     }
 }

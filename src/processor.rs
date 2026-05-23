@@ -822,7 +822,7 @@ mod tests {
     }
 
     #[test]
-    fn test_execute_slt_negative() {
+    fn test_execute_slt_not_taken() {
         let mut processor = Processor::new(0, 0, 0, 0);
         // x1 = 2, x2 = 1 → x1 > x2 signed → rd = 0
         processor.registers[1] = 2;
@@ -918,10 +918,12 @@ mod tests {
     #[test]
     fn test_store_with_negative_offset() {
         let mut p = processor_with_data(vec![0x00]);
-        p.write_register(1, 0x10000001); // point rs1 past the first byte
+        p.write_register(1, 0x10000001); // point rs1 one byte past data_base
         p.write_register(2, 0x42);
         p.execute(Instruction::Sb { rs1: 1, rs2: 2, imm: -1 }).unwrap();
-        assert_eq!(p.bus.read(p.data_base, AccessSize::Byte).unwrap(), 0x42);
+        // Read back through execute to stay at the public API and exercise the load path
+        p.execute(Instruction::Lb { rd: 3, rs1: 1, imm: -1 }).unwrap();
+        assert_eq!(p.read_register(3), 0x42);
     }
 
     #[test]
@@ -943,7 +945,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bltu_signed_not_taken() {
+    fn test_bltu_not_taken_when_unsigned_larger() {
         let mut p = Processor::new(0, 0, 0, 0);
         p.write_register(1, 0xFFFFFFFF); // largest unsigned
         p.write_register(2, 1);
@@ -997,19 +999,12 @@ mod tests {
     }
 
     #[test]
-    fn test_lui_lower_bits_are_zero() {
-        let mut p = Processor::new(0, 0, 0, 0);
-        p.execute(Instruction::Lui { rd: 1, imm: 0x12345000 }).unwrap();
-        // lower 12 bits must always be zero
-        assert_eq!(p.read_register(1) & 0xFFF, 0);
-    }
-
-    #[test]
     fn test_lui_ignores_pc() {
+        // With pc=0x100 and imm=0x12345000, AUIPC would produce 0x12345100.
+        // LUI must produce 0x12345000, proving it does not add PC.
         let mut p = Processor::new(0, 0, 0, 0);
         p.pc = 0x100;
         p.execute(Instruction::Lui { rd: 1, imm: 0x12345000 }).unwrap();
-        // LUI does not involve PC at all
         assert_eq!(p.read_register(1), 0x12345000);
     }
 

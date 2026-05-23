@@ -188,7 +188,13 @@ mod tests {
         let mut sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         sym_table.build(&statements).unwrap();
 
-        assert_eq!(sym_table.get_address("my_aligned_label"), Some(config::DATA_BASE + 0x10)) // 3 for "Hi" + 1 for \0, then aligned to 4 bytes
+        assert_eq!(sym_table.get_address("my_aligned_label"), Some(config::DATA_BASE + 0x10)) // "Hi\0" = 3 bytes, then padded to 16-byte boundary (2^4)
+    }
+
+    #[test]
+    fn test_unknown_label_returns_none() {
+        let mut sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
+        assert_eq!(sym_table.get_address("nonexistent"), None);
     }
 
     #[test]
@@ -203,7 +209,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let statements = parser.parse().unwrap();
 
-        let mut sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
-        assert!(sym_table.build(&statements).is_err());
+        let result = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE).build(&statements);
+        assert!(result.is_err());
     }
 }

@@ -415,11 +415,14 @@ mod tests {
 
     use super::*;
 
+    fn parse(s: &str) -> Vec<Statement> {
+        let tokens = tokenize(s).unwrap();
+        Parser::new(tokens).parse().unwrap()
+    }
+
     #[test]
     fn test_r_instruction_parsing() {
-        let tokens = tokenize("add x1, x2, x3").unwrap();
-        let mut parser = Parser::new(tokens);
-        let nodes = parser.parse().unwrap();
+        let nodes = parse("add x1, x2, x3");
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].kind, StatementKind::Instruction("add".to_string(), vec![
             Operand::Register(1),
@@ -431,9 +434,7 @@ mod tests {
 
     #[test]
     fn test_i_instruction_parsing() {
-        let tokens = tokenize("addi x1, x2, 10").unwrap();
-        let mut parser = Parser::new(tokens);
-        let nodes = parser.parse().unwrap();
+        let nodes = parse("addi x1, x2, 10");
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].kind, StatementKind::Instruction("addi".to_string(), vec![
             Operand::Register(1),
@@ -445,9 +446,7 @@ mod tests {
 
     #[test]
     fn test_s_instruction_parsing() {
-        let tokens = tokenize("sw x1, 4(x2)").unwrap();
-        let mut parser = Parser::new(tokens);
-        let nodes = parser.parse().unwrap();
+        let nodes = parse("sw x1, 4(x2)");
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].kind, StatementKind::Instruction("sw".to_string(), vec![
             Operand::Register(1),
@@ -458,9 +457,7 @@ mod tests {
 
     #[test]
     fn test_label_parsing() {
-        let tokens = tokenize("loop:\nadd x1, x2, x3").unwrap();
-        let mut parser = Parser::new(tokens);
-        let nodes = parser.parse().unwrap();
+        let nodes = parse("loop:\nadd x1, x2, x3");
         assert_eq!(nodes.len(), 2);
         assert_eq!(nodes[0].kind, StatementKind::Label("loop".to_string()));
         assert_eq!(nodes[0].line, 1);
@@ -474,9 +471,7 @@ mod tests {
 
     #[test]
     fn test_directive_parsing() {
-        let tokens = tokenize(".data\nmyVar: .word 42").unwrap();
-        let mut parser = Parser::new(tokens);
-        let nodes = parser.parse().unwrap();
+        let nodes = parse(".data\nmyVar: .word 42");
         assert_eq!(nodes.len(), 3);
         assert_eq!(nodes[0].kind, StatementKind::Directive(DirectiveKind::Data, vec![]));
         assert_eq!(nodes[0].line, 1);
@@ -490,9 +485,7 @@ mod tests {
 
     #[test]
     fn test_directive_with_string_parsing() {
-        let tokens = tokenize(".asciiz \"Hello, world!\"").unwrap();
-        let mut parser = Parser::new(tokens);
-        let nodes = parser.parse().unwrap();
+        let nodes = parse(".asciiz \"Hello, world!\"");
         assert_eq!(nodes.len(), 1);
         // .asciiz is normalized to DirectiveKind::Asciz at parse time
         assert_eq!(nodes[0].kind, StatementKind::Directive(DirectiveKind::Asciz, vec![
@@ -503,9 +496,7 @@ mod tests {
 
     #[test]
     fn test_label_in_memory_operand_parsing() {
-        let tokens = tokenize("sw x1, my_label(x2)").unwrap();
-        let mut parser = Parser::new(tokens);
-        let nodes = parser.parse().unwrap();
+        let nodes = parse("sw x1, my_label(x2)");
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].kind, StatementKind::Instruction("sw".to_string(), vec![
             Operand::Register(1),
@@ -515,29 +506,29 @@ mod tests {
     }
 
     #[test]
-    fn test_modifier_parsing() {
-        let tokens = tokenize("lui x1, %hi(label)").unwrap();
-        let mut parser = Parser::new(tokens);
-        let nodes = parser.parse().unwrap();
+    fn test_hi_modifier_parsing() {
+        let nodes = parse("lui x1, %hi(label)");
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].kind, StatementKind::Instruction("lui".to_string(), vec![
             Operand::Register(1),
             Operand::Modifier(ModifierKind::Hi, "label".to_string()),
         ]));
+    }
 
-        let tokens = tokenize("addi x1, x1, %lo(label)").unwrap();
-        let mut parser = Parser::new(tokens);
-        let nodes = parser.parse().unwrap();
+    #[test]
+    fn test_lo_modifier_parsing() {
+        let nodes = parse("addi x1, x1, %lo(label)");
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].kind, StatementKind::Instruction("addi".to_string(), vec![
             Operand::Register(1),
             Operand::Register(1),
             Operand::Modifier(ModifierKind::Lo, "label".to_string()),
         ]));
+    }
 
-        let tokens = tokenize("lw x1, %lo(label)(x2)").unwrap();
-        let mut parser = Parser::new(tokens);
-        let nodes = parser.parse().unwrap();
+    #[test]
+    fn test_modifier_in_memory_operand_parsing() {
+        let nodes = parse("lw x1, %lo(label)(x2)");
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].kind, StatementKind::Instruction("lw".to_string(), vec![
             Operand::Register(1),
@@ -546,5 +537,29 @@ mod tests {
                 reg: 2
             },
         ]));
+    }
+
+    #[test]
+    fn test_label_without_colon_is_error() {
+        let tokens = tokenize("loop add x1, x2, x3").unwrap();
+        let result = Parser::new(tokens).parse();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("':'"));
+    }
+
+    #[test]
+    fn test_missing_operand_after_comma_is_error() {
+        // comma implies another operand, but newline follows
+        let tokens = tokenize("add x1, x2,\nadd x3, x4, x5").unwrap();
+        let result = Parser::new(tokens).parse();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_unclosed_memory_paren_is_error() {
+        let tokens = tokenize("lw x1, 0(x2").unwrap();
+        let result = Parser::new(tokens).parse();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("parenthesis"));
     }
 }

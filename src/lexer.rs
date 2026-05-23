@@ -596,6 +596,7 @@ mod tests {
         assert_eq!(tokens.len(), 3); // 2 tokens + Eof
         assert_eq!(tokens[0].token, Token::Directive(".string".to_string()));
         assert_eq!(tokens[1].token, Token::StringLiteral("Hello, %s!\n".to_string()));
+        assert_eq!(tokens[2].token, Token::Eof);
     }
 
     #[test]
@@ -612,7 +613,7 @@ mod tests {
     }
 
     #[test]
-    fn test_inmediate_hexadecimal() {
+    fn test_immediate_hexadecimal() {
         let source = "addi a0, sp, 0xFF";
         let tokens = tokenize(source).expect("Should tokenize successfully");
         assert_eq!(tokens.len(), 7); // 6 tokens + Eof
@@ -651,16 +652,19 @@ mod tests {
     }
 
     #[test]
-    fn test_lex_errors() {
-        // Unexpected character
+    fn test_lex_error_unexpected_char() {
         let res = tokenize("add x1, x2, @");
         assert_eq!(res.unwrap_err(), LexError::new(1, 13, LexErrorKind::UnexpectedChar('@')));
+    }
 
-        // Unterminated string
+    #[test]
+    fn test_lex_error_unterminated_string() {
         let res = tokenize(".string \"Hello");
         assert_eq!(res.unwrap_err(), LexError::new(1, 15, LexErrorKind::UnterminatedString));
+    }
 
-        // Unknown escape sequence
+    #[test]
+    fn test_lex_error_unknown_escape_sequence() {
         let res = tokenize(".string \"Hello\\z\"");
         assert_eq!(res.unwrap_err(), LexError::new(1, 17, LexErrorKind::UnknownEscapeSequence('z')));
     }
@@ -688,23 +692,26 @@ mod tests {
     }
 
     #[test]
-    fn test_robust_numbers() {
-        // Negative hex
-        let res = tokenize("addi a0, a0, -0x10");
-        let tokens = res.expect("Should tokenize successfully");
+    fn test_negative_hex_number() {
+        let tokens = tokenize("addi a0, a0, -0x10").expect("Should tokenize successfully");
         assert_eq!(tokens[5].token, Token::Immediate(-16));
+    }
 
-        // Empty prefix
+    #[test]
+    fn test_empty_hex_prefix() {
         let res = tokenize("addi a0, a0, 0x");
         assert_eq!(res.unwrap_err(), LexError::new(1, 16, LexErrorKind::EmptyNumberPrefix("0x".to_string())));
+    }
 
-        // Negative empty prefix
+    #[test]
+    fn test_empty_binary_prefix() {
         let res = tokenize("addi a0, a0, -0b");
         assert_eq!(res.unwrap_err(), LexError::new(1, 17, LexErrorKind::EmptyNumberPrefix("-0b".to_string())));
+    }
 
-        // Binary
-        let res = tokenize("0b1010");
-        let tokens = res.expect("Should tokenize successfully");
+    #[test]
+    fn test_binary_number() {
+        let tokens = tokenize("0b1010").expect("Should tokenize successfully");
         assert_eq!(tokens[0].token, Token::Immediate(10));
     }
 
@@ -749,16 +756,19 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_number() {
-        // Decimal with letters
+    fn test_invalid_decimal_with_letters() {
         let res = tokenize("123xyz");
         assert_eq!(res.unwrap_err(), LexError::new(1, 1, LexErrorKind::InvalidNumber("123xyz".to_string())));
+    }
 
-        // Binary with invalid digits
+    #[test]
+    fn test_invalid_binary_digit() {
         let res = tokenize("0b10102");
         assert_eq!(res.unwrap_err(), LexError::new(1, 1, LexErrorKind::InvalidNumber("0b10102".to_string())));
+    }
 
-        // Hex with invalid letters
+    #[test]
+    fn test_invalid_hex_letter() {
         let res = tokenize("0xDEADG");
         assert_eq!(res.unwrap_err(), LexError::new(1, 1, LexErrorKind::InvalidNumber("0xDEADG".to_string())));
     }
