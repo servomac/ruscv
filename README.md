@@ -22,9 +22,10 @@ A RISC-V Assembler and Emulator implementation in Rust.
   - **Data**: `.byte`, `.half`, `.word`, `.ascii`, `.asciz`, `.string`, `.space`
   - **Alignment**: `.align`
   - **Modifiers**: `%hi(symbol)`, `%lo(symbol)`
-- **ELF32 Loader**: Loads pre-compiled ELF32 binaries directly, mapping each `PT_LOAD` segment into the address space and resolving the `tohost` symbol for test pass/fail detection.
-- **Headless ELF Runner**: Runs an ELF binary non-interactively from the command line, printing `PASS` or `FAIL` and exiting with the appropriate code — suitable for scripting and CI.
+- **ELF32 Loader**: Loads pre-compiled ELF32 binaries directly. Handles ROM→RAM split layouts (maps each segment at its VMA and also at its LMA so startup copy routines work), fills small inter-segment alignment gaps with zeroed RAM, and resolves the `tohost` symbol for test pass/fail detection.
+- **Headless ELF Runner**: Runs an ELF binary non-interactively from the command line, printing `PASS` or `FAIL` and exiting with the appropriate code — suitable for scripting and CI. Illegal instruction faults report the exact PC and raw instruction word.
 - **rv32ui Test Suite**: Passes all 40 `rv32ui-p` tests from the official RISC-V test suite (`make run-tests`).
+- **FreeRTOS**: The RISC-V QEMU virt demo builds and runs on ruscv (`make freertos-run`). The demo is compiled for `rv32i_zicsr` (the supported architecture) and prints UART output in real time.
 - **M-mode Privileged ISA**: Full trap infrastructure for running bare-metal OS code:
   - `CsrFile` tracks `mstatus`, `mtvec`, `mscratch`, `mepc`, `mcause`, `mie`, `mip`.
   - `ecall` saves `mepc`, snapshots `MIE→MPIE`, clears `MIE`, sets `mcause=11`, jumps to `mtvec`.
@@ -37,6 +38,9 @@ A RISC-V Assembler and Emulator implementation in Rust.
 
 ## Pending Features
 
+- **C extension**: Compressed (16-bit) instructions are not yet decoded. FreeRTOS must be compiled with `-march=rv32i_zicsr` to avoid them.
+- **M extension**: Multiply/divide instructions (`MUL`, `DIV`, `REM`) are not yet implemented.
+- **A extension**: Atomic instructions (`LR.W`, `SC.W`, `AMO*`) are not yet implemented.
 - **UART RX**: The UART is TX-only; receive (RBR, LSR RX-ready bit) is not yet implemented.
 - **CLINT Software Interrupts**: `msip` (machine software interrupt) is not yet wired up.
 - **S-mode / U-mode**: Only M-mode is implemented; virtual memory (`satp`, page tables) and privilege transitions are not yet supported.
@@ -103,6 +107,12 @@ To run the official rv32ui-p RISC-V test suite (downloads pre-compiled binaries 
 
 ```bash
 make run-tests
+```
+
+To build and run the FreeRTOS RISC-V QEMU virt demo (requires `gcc-riscv64-unknown-elf` and `picolibc-riscv64-unknown-elf`):
+
+```bash
+make freertos-run
 ```
 
 ## Contributing
