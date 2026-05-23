@@ -25,14 +25,21 @@ A RISC-V Assembler and Emulator implementation in Rust.
 - **ELF32 Loader**: Loads pre-compiled ELF32 binaries directly, mapping each `PT_LOAD` segment into the address space and resolving the `tohost` symbol for test pass/fail detection.
 - **Headless ELF Runner**: Runs an ELF binary non-interactively from the command line, printing `PASS` or `FAIL` and exiting with the appropriate code — suitable for scripting and CI.
 - **rv32ui Test Suite**: Passes all 40 `rv32ui-p` tests from the official RISC-V test suite (`make run-tests`).
+- **M-mode Privileged ISA**: Full trap infrastructure for running bare-metal OS code:
+  - `CsrFile` tracks `mstatus`, `mtvec`, `mscratch`, `mepc`, `mcause`, `mie`, `mip`.
+  - `ecall` saves `mepc`, snapshots `MIE→MPIE`, clears `MIE`, sets `mcause=11`, jumps to `mtvec`.
+  - `mret` restores `PC←mepc` and `MIE←MPIE`.
+  - All six Zicsr instructions (`csrrw`/`csrrs`/`csrrc` and immediate variants) are fully supported.
+- **NS16550 UART**: TX-only 16550-compatible UART at `0x1000_0000`. Writes to THR (offset 0) are buffered; reads from LSR (offset 5) always report TX ready. Output appears in the TUI logs pane prefixed with `UART:`.
+- **CLINT Timer**: Standard RISC-V CLINT at `0x0200_0000`. `mtime` increments on every step; machine timer interrupts are delivered when `mtime >= mtimecmp` and `mstatus.MIE && mie.MTIE`.
 - **Comprehensive Error Handling**: The assembler identifies and reports multiple errors across the source file instead of failing at the first encountered issue.
 - **Unit Tested**: Extensively verified with a suite of unit tests for instruction encoding, decoding, and execution state transitions.
 
 ## Pending Features
 
-- **Privileged ISA**: Full M-mode trap infrastructure — correct `mepc` save on trap entry, working `MRET`, `mstatus` (MIE/MPIE/MPP), `mscratch`, `mtval`. Currently only `mtvec` and `mcause` are tracked.
-- **UART**: The UART device is registered but is a no-op stub; writes to THR are silently dropped.
-- **CLINT Timer**: `mtime`/`mtimecmp` and timer-interrupt delivery are not yet implemented.
+- **UART RX**: The UART is TX-only; receive (RBR, LSR RX-ready bit) is not yet implemented.
+- **CLINT Software Interrupts**: `msip` (machine software interrupt) is not yet wired up.
+- **S-mode / U-mode**: Only M-mode is implemented; virtual memory (`satp`, page tables) and privilege transitions are not yet supported.
 
 ## Project Structure
 
