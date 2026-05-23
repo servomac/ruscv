@@ -329,7 +329,7 @@ fn move_cursor_to_pc(app: &mut App) {
 fn format_step_error(e: &StepError) -> String {
     match e {
         StepError::Ebreak => "ebreak".to_string(),
-        StepError::IllegalInstruction => "illegal instruction".to_string(),
+        StepError::IllegalInstruction { pc, word } => format!("illegal instruction at pc=0x{:08x} word=0x{:08x}", pc, word),
         StepError::MemoryFault(f) => format!("memory fault: {:?}", f),
     }
 }

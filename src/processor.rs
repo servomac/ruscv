@@ -88,7 +88,7 @@ pub struct Processor {
 
 #[derive(Debug, PartialEq)]
 pub enum StepError {
-    IllegalInstruction,
+    IllegalInstruction { pc: u32, word: u32 },
     MemoryFault(MemoryFault),
     Ebreak,
 }
@@ -219,12 +219,34 @@ impl Processor {
         let uart_output = Arc::new(Mutex::new(Vec::new()));
         register_platform_devices(&mut bus, Arc::clone(&clint_state), Arc::clone(&uart_output));
 
-        // Map every ELF PT_LOAD segment as writable RAM so self-modifying
-        // tests (fence_i) work without needing separate ROM regions.
-        for (addr, data) in &image.segments {
-            let mut ram = Ram::new(data.len());
-            ram.data.copy_from_slice(data);
-            bus.add_device(*addr, data.len() as u32, Box::new(ram));
+        // Map every ELF PT_LOAD segment at its VMA (runtime address).
+        // If paddr != vaddr (ROM→RAM layout), also map the file bytes at paddr
+        // so startup copy code (e.g. FreeRTOS start.S) can read from there.
+        let mut sorted_segs: Vec<_> = image.segments.iter().collect();
+        sorted_segs.sort_by_key(|s| s.vaddr);
+
+        for seg in &sorted_segs {
+            let mut ram = Ram::new(seg.data.len());
+            ram.data.copy_from_slice(&seg.data);
+            bus.add_device(seg.vaddr, seg.data.len() as u32, Box::new(ram));
+
+            if seg.paddr != seg.vaddr && seg.filesz > 0 {
+                let mut lma_ram = Ram::new(seg.filesz);
+                lma_ram.data.copy_from_slice(&seg.data[..seg.filesz]);
+                bus.add_device(seg.paddr, seg.filesz as u32, Box::new(lma_ram));
+            }
+        }
+
+        // Fill small gaps between consecutive segments with zeroed RAM. Linker
+        // alignment can leave a few unmapped bytes between sections that startup
+        // code still accesses (e.g. BSS clear loop starting before the BSS segment).
+        for pair in sorted_segs.windows(2) {
+            let gap_start = pair[0].vaddr + pair[0].data.len() as u32;
+            let gap_end   = pair[1].vaddr;
+            if gap_start < gap_end && (gap_end - gap_start) < 0x10000 {
+                let sz = (gap_end - gap_start) as usize;
+                bus.add_device(gap_start, sz as u32, Box::new(Ram::new(sz)));
+            }
         }
 
         let stack_start = stack_base.wrapping_sub(stack_size as u32);
@@ -265,8 +287,9 @@ impl Processor {
         if self.check_and_deliver_interrupt() {
             return Ok(());
         }
-        let memory_instruction = self.fetch()?;
-        let instruction = self.decode(memory_instruction)?;
+        let word = self.fetch()?;
+        let instruction = self.decode(word)
+            .map_err(|_| StepError::IllegalInstruction { pc: self.pc, word })?;
         self.execute(instruction)?;
         Ok(())
     }
@@ -324,7 +347,7 @@ impl Processor {
             0b0010111 => self.decode_u_type(memory_instruction), // auipc
             0b1110011 => self.decode_system_type(memory_instruction), // ecall, ebreak, csr
             0b0001111 => Ok(Instruction::Fence), // fence, fence.i
-            _ => Err(StepError::IllegalInstruction),
+            _ => Err(StepError::IllegalInstruction { pc: 0, word: 0 }),
         }
     }
 
@@ -347,7 +370,7 @@ impl Processor {
             (0x5, 0x20) => Ok(Instruction::Sra { rd, rs1, rs2 }),
             (0x2, 0x00) => Ok(Instruction::Slt { rd, rs1, rs2 }),
             (0x3, 0x00) => Ok(Instruction::Sltu { rd, rs1, rs2 }),
-            _ => Err(StepError::IllegalInstruction),
+            _ => Err(StepError::IllegalInstruction { pc: 0, word: 0 }),
         }
     }
 
@@ -367,7 +390,7 @@ impl Processor {
             0x5 => self.decode_i_shift(memory_instruction),
             0x2 => Ok(Instruction::Slti { rd, rs1, imm }),
             0x3 => Ok(Instruction::Sltiu { rd, rs1, imm }),
-            _ => Err(StepError::IllegalInstruction),
+            _ => Err(StepError::IllegalInstruction { pc: 0, word: 0 }),
         }
     }
 
@@ -382,7 +405,7 @@ impl Processor {
             (0x1, 0x0) => Ok(Instruction::Slli { rd, rs1, shamt }),
             (0x5, 0x0) => Ok(Instruction::Srli { rd, rs1, shamt }),
             (0x5, 0x20) => Ok(Instruction::Srai { rd, rs1, shamt }),
-            _ => Err(StepError::IllegalInstruction),
+            _ => Err(StepError::IllegalInstruction { pc: 0, word: 0 }),
         }
     }
 
@@ -399,7 +422,7 @@ impl Processor {
             0x2 => Ok(Instruction::Lw { rd, rs1, imm }),
             0x4 => Ok(Instruction::Lbu { rd, rs1, imm }),
             0x5 => Ok(Instruction::Lhu { rd, rs1, imm }),
-            _ => Err(StepError::IllegalInstruction),
+            _ => Err(StepError::IllegalInstruction { pc: 0, word: 0 }),
         }
     }
 
@@ -416,7 +439,7 @@ impl Processor {
             0x0 => Ok(Instruction::Sb { rs1, rs2, imm }),
             0x1 => Ok(Instruction::Sh { rs1, rs2, imm }),
             0x2 => Ok(Instruction::Sw { rs1, rs2, imm }),
-            _ => Err(StepError::IllegalInstruction),
+            _ => Err(StepError::IllegalInstruction { pc: 0, word: 0 }),
         }
     }
 
@@ -440,7 +463,7 @@ impl Processor {
             0x5 => Ok(Instruction::Bge { rs1, rs2, imm }),
             0x6 => Ok(Instruction::Bltu { rs1, rs2, imm }),
             0x7 => Ok(Instruction::Bgeu { rs1, rs2, imm }),
-            _ => Err(StepError::IllegalInstruction),
+            _ => Err(StepError::IllegalInstruction { pc: 0, word: 0 }),
         }
     }
 
@@ -453,7 +476,7 @@ impl Processor {
         match opcode {
             0x37 => Ok(Instruction::Lui { rd, imm }),
             0x17 => Ok(Instruction::Auipc { rd, imm }),
-            _ => Err(StepError::IllegalInstruction),
+            _ => Err(StepError::IllegalInstruction { pc: 0, word: 0 }),
         }
     }
 
@@ -478,7 +501,7 @@ impl Processor {
 
         let func3 = (memory_instruction >> 12) & 0x7;
         if func3 != 0x0 {
-            return Err(StepError::IllegalInstruction);
+            return Err(StepError::IllegalInstruction { pc: 0, word: 0 });
         }
 
         Ok(Instruction::Jalr { rd, rs1, imm })
@@ -902,7 +925,7 @@ mod tests {
         // funct7=0010000 | shamt=00100 | rs1=00010 | funct3=101 | rd=00001 | op=0010011
         // 0x20415093
         let result = processor.decode(0x20415093);
-        assert_eq!(result, Err(StepError::IllegalInstruction));
+        assert!(matches!(result, Err(StepError::IllegalInstruction { .. })));
     }
 
     #[test]

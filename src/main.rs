@@ -34,7 +34,12 @@ fn main() -> Result<(), std::io::Error> {
                 std::process::exit(1);
             }
             runner::TestResult::Fault(e) => {
-                println!("FAULT: {:?}", e);
+                use crate::processor::StepError;
+                match e {
+                    StepError::IllegalInstruction { pc, word } =>
+                        println!("FAULT: IllegalInstruction at pc=0x{:08x} word=0x{:08x}", pc, word),
+                    other => println!("FAULT: {:?}", other),
+                }
                 std::process::exit(1);
             }
             runner::TestResult::MaxSteps => {

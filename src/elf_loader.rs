@@ -1,9 +1,18 @@
 use goblin::elf::Elf;
 
 #[derive(Debug)]
+pub struct ElfSegment {
+    pub vaddr: u32,
+    /// Physical/load address — may differ from vaddr for data segments in
+    /// ROM→RAM layouts. Startup code reads from paddr and copies to vaddr.
+    pub paddr: u32,
+    pub data: Vec<u8>,  // zero-padded to p_memsz
+    pub filesz: usize,  // bytes present in the file (< data.len() for .bss)
+}
+
+#[derive(Debug)]
 pub struct ElfImage {
-    /// (load_address, bytes) for each PT_LOAD segment
-    pub segments: Vec<(u32, Vec<u8>)>,
+    pub segments: Vec<ElfSegment>,
     pub entry_point: u32,
     /// Address of the `tohost` symbol, used to detect test pass/fail
     pub tohost_addr: Option<u32>,
@@ -31,19 +40,19 @@ pub fn load(bytes: &[u8]) -> Result<ElfImage, ElfError> {
         return Err(ElfError::NotElf32);
     }
 
-    let segments: Vec<(u32, Vec<u8>)> = elf
+    let segments: Vec<ElfSegment> = elf
         .program_headers
         .iter()
         .filter(|ph| ph.p_type == goblin::elf::program_header::PT_LOAD)
         .map(|ph| {
             let file_start = ph.p_offset as usize;
-            let file_end = file_start + ph.p_filesz as usize;
-            let mut data = bytes[file_start..file_end].to_vec();
+            let filesz = ph.p_filesz as usize;
+            let mut data = bytes[file_start..file_start + filesz].to_vec();
             // zero-fill to p_memsz (e.g. .bss)
             if ph.p_memsz > ph.p_filesz {
                 data.resize(ph.p_memsz as usize, 0);
             }
-            (ph.p_paddr as u32, data)
+            ElfSegment { vaddr: ph.p_vaddr as u32, paddr: ph.p_paddr as u32, data, filesz }
         })
         .collect();
 
