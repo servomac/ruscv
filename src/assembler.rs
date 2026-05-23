@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::parser::{Statement, StatementKind, Operand, MemoryOffset, Section};
+use crate::parser::{Statement, StatementKind, Operand, MemoryOffset, Section, DirectiveKind};
 use crate::lexer::ModifierKind;
 use crate::symbols::SymbolTable;
 
@@ -72,49 +72,43 @@ impl Assembler {
                         }
                     }
                 }
-                StatementKind::Directive(name, ops) => {
-                    if name == ".text" {
-                        current_section = Section::Text;
-                        continue;
-                    }
-                    if name == ".data" {
-                        current_section = Section::Data;
-                        continue;
-                    }
-
-                    if name == ".align" {
-                        if let Some(Operand::Immediate(pow)) = ops.get(0) {
-                            let alignment = 2u32.pow(*pow as u32);
-                            let padding = (alignment - (addr % alignment)) % alignment;
-                            let padding_bytes = vec![0u8; padding as usize];
-
-                            if current_section == Section::Text {
-                                self.text_bin.extend_from_slice(&padding_bytes);
-                                current_pc += padding;
+                StatementKind::Directive(kind, ops) => {
+                    match kind {
+                        DirectiveKind::Text => { current_section = Section::Text; continue; }
+                        DirectiveKind::Data => { current_section = Section::Data; continue; }
+                        DirectiveKind::Align => {
+                            if let Some(Operand::Immediate(pow)) = ops.get(0) {
+                                let alignment = 2u32.pow(*pow as u32);
+                                let padding = (alignment - (addr % alignment)) % alignment;
+                                let padding_bytes = vec![0u8; padding as usize];
+                                if current_section == Section::Text {
+                                    self.text_bin.extend_from_slice(&padding_bytes);
+                                    current_pc += padding;
+                                } else {
+                                    self.data_bin.extend_from_slice(&padding_bytes);
+                                    data_pc += padding;
+                                }
                             } else {
-                                self.data_bin.extend_from_slice(&padding_bytes);
-                                data_pc += padding;
+                                errors.push(AssemblerError::new(stmt.line, "Directive .align requires an immediate value".to_string()));
                             }
                             continue;
-                        } else {
-                            errors.push(AssemblerError::new(stmt.line, "Directive .align requires an immediate value".to_string()));
-                            continue;
                         }
-                    }
-
-                    match emit_data_bytes(name, ops) {
-                        Ok(bytes) => {
-                            // GNU AS allows data directives in .text; emit to the active section.
-                            if current_section == Section::Text {
-                                self.text_bin.extend_from_slice(&bytes);
-                                current_pc += bytes.len() as u32;
-                            } else {
-                                self.data_bin.extend_from_slice(&bytes);
-                                data_pc += bytes.len() as u32;
+                        _ => {
+                            match emit_data_bytes(kind, ops) {
+                                Ok(bytes) => {
+                                    // GNU AS allows data directives in .text; emit to the active section.
+                                    if current_section == Section::Text {
+                                        self.text_bin.extend_from_slice(&bytes);
+                                        current_pc += bytes.len() as u32;
+                                    } else {
+                                        self.data_bin.extend_from_slice(&bytes);
+                                        data_pc += bytes.len() as u32;
+                                    }
+                                }
+                                Err(msg) => {
+                                    errors.push(AssemblerError::new(stmt.line, msg));
+                                }
                             }
-                        }
-                        Err(msg) => {
-                            errors.push(AssemblerError::new(stmt.line, msg));
                         }
                     }
                 }
@@ -464,11 +458,10 @@ fn encode_j_type(
     }
 }
 
-fn emit_data_bytes(name: &str, ops: &[Operand]) -> Result<Vec<u8>, String> {
+fn emit_data_bytes(kind: &DirectiveKind, ops: &[Operand]) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
-    // TODO doubt: should warn the user if the operand does not fit the target size? i.e. "Value {} out of range for .byte"
-    match name {
-        ".byte" => {
+    match kind {
+        DirectiveKind::Byte => {
             for op in ops {
                 match op {
                     Operand::Immediate(val) => bytes.push(*val as u8),
@@ -476,7 +469,7 @@ fn emit_data_bytes(name: &str, ops: &[Operand]) -> Result<Vec<u8>, String> {
                 }
             }
         }
-        ".half" => {
+        DirectiveKind::Half => {
             for op in ops {
                 match op {
                     Operand::Immediate(val) => bytes.extend_from_slice(&(*val as u16).to_le_bytes()),
@@ -484,7 +477,7 @@ fn emit_data_bytes(name: &str, ops: &[Operand]) -> Result<Vec<u8>, String> {
                 }
             }
         }
-        ".word" => {
+        DirectiveKind::Word => {
             for op in ops {
                 match op {
                     Operand::Immediate(val) => bytes.extend_from_slice(&(*val as u32).to_le_bytes()),
@@ -492,21 +485,26 @@ fn emit_data_bytes(name: &str, ops: &[Operand]) -> Result<Vec<u8>, String> {
                 }
             }
         }
-        ".ascii" | ".asciz" | ".string" => {
-            let has_null = name != ".ascii";
+        DirectiveKind::Ascii => {
+            for op in ops {
+                match op {
+                    Operand::StringLiteral(s) => bytes.extend_from_slice(s.as_bytes()),
+                    _ => return Err("Invalid operand for .ascii: expected string literal".to_string()),
+                }
+            }
+        }
+        DirectiveKind::Asciz => {
             for op in ops {
                 match op {
                     Operand::StringLiteral(s) => {
                         bytes.extend_from_slice(s.as_bytes());
-                        if has_null {
-                            bytes.push(0);
-                        }
+                        bytes.push(0);
                     }
-                    _ => return Err(format!("Invalid operand for {}: expected string literal", name)),
+                    _ => return Err("Invalid operand for .asciz: expected string literal".to_string()),
                 }
             }
         }
-        ".space" => {
+        DirectiveKind::Space => {
             if let Some(Operand::Immediate(val)) = ops.get(0) {
                 if *val < 0 {
                     return Err(".space requires a positive value".to_string());
@@ -516,7 +514,9 @@ fn emit_data_bytes(name: &str, ops: &[Operand]) -> Result<Vec<u8>, String> {
                 return Err(".space requires an immediate value".to_string());
             }
         }
-        _ => return Err(format!("Unsupported directive '{}'", name)),
+        DirectiveKind::Unknown(name) => return Err(format!("Unsupported directive '{}'", name)),
+        // Section switches and .align are handled before emit_data_bytes is called.
+        DirectiveKind::Text | DirectiveKind::Data | DirectiveKind::Align => unreachable!(),
     }
     Ok(bytes)
 }
@@ -540,11 +540,11 @@ mod tests {
                 line: 1,
             },
             Statement {
-                kind: StatementKind::Directive(".data".to_string(), vec![]),
+                kind: StatementKind::Directive(DirectiveKind::Data, vec![]),
                 line: 2,
             },
             Statement {
-                kind: StatementKind::Directive(".word".to_string(), vec![
+                kind: StatementKind::Directive(DirectiveKind::Word, vec![
                     Operand::Immediate(42),
                 ]),
                 line: 3,
@@ -707,7 +707,7 @@ mod tests {
         let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
-                kind: StatementKind::Directive(".float".to_string(), vec![
+                kind: StatementKind::Directive(DirectiveKind::Unknown(".float".to_string()), vec![
                     Operand::Immediate(42),
                 ]),
                 line: 35,
@@ -775,7 +775,7 @@ mod tests {
         let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
-                kind: StatementKind::Directive(".word".to_string(), vec![
+                kind: StatementKind::Directive(DirectiveKind::Word, vec![
                     Operand::Register(1), // Should be immediate
                 ]),
                 line: 40,
@@ -820,7 +820,7 @@ mod tests {
                 line: 3,
             },
             Statement {
-                kind: StatementKind::Directive(".float".to_string(), vec![
+                kind: StatementKind::Directive(DirectiveKind::Unknown(".float".to_string()), vec![
                     Operand::Immediate(42),
                 ]),
                 line: 4,

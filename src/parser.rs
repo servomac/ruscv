@@ -9,6 +9,54 @@ pub enum Section {
     Data,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum DirectiveKind {
+    Text,
+    Data,
+    Align,
+    Byte,
+    Half,
+    Word,
+    Ascii,
+    Asciz,  // covers .asciz, .asciiz, .string
+    Space,
+    Unknown(String),
+}
+
+impl fmt::Display for DirectiveKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DirectiveKind::Text    => write!(f, ".text"),
+            DirectiveKind::Data    => write!(f, ".data"),
+            DirectiveKind::Align   => write!(f, ".align"),
+            DirectiveKind::Byte    => write!(f, ".byte"),
+            DirectiveKind::Half    => write!(f, ".half"),
+            DirectiveKind::Word    => write!(f, ".word"),
+            DirectiveKind::Ascii   => write!(f, ".ascii"),
+            DirectiveKind::Asciz   => write!(f, ".asciz"),
+            DirectiveKind::Space   => write!(f, ".space"),
+            DirectiveKind::Unknown(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+impl From<&str> for DirectiveKind {
+    fn from(s: &str) -> Self {
+        match s {
+            ".text"                      => DirectiveKind::Text,
+            ".data"                      => DirectiveKind::Data,
+            ".align"                     => DirectiveKind::Align,
+            ".byte"                      => DirectiveKind::Byte,
+            ".half"                      => DirectiveKind::Half,
+            ".word"                      => DirectiveKind::Word,
+            ".ascii"                     => DirectiveKind::Ascii,
+            ".asciz" | ".asciiz" | ".string" => DirectiveKind::Asciz,
+            ".space"                     => DirectiveKind::Space,
+            _                            => DirectiveKind::Unknown(s.to_string()),
+        }
+    }
+}
+
 impl fmt::Display for Section {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -92,7 +140,7 @@ pub struct Statement {
 pub enum StatementKind {
     Instruction(String, Vec<Operand>),
     Label(String),
-    Directive(String, Vec<Operand>),
+    Directive(DirectiveKind, Vec<Operand>),
 }
 
 impl fmt::Display for Statement {
@@ -112,8 +160,8 @@ impl fmt::Display for Statement {
                 Ok(())
             }
             StatementKind::Label(name) => write!(f, "{}:", name),
-            StatementKind::Directive(name, ops) => {
-                write!(f, "{}", name)?;
+            StatementKind::Directive(kind, ops) => {
+                write!(f, "{}", kind)?;
                 if !ops.is_empty() {
                     write!(f, " ")?;
                     for (i, op) in ops.iter().enumerate() {
@@ -236,7 +284,7 @@ impl Parser {
                         operands.push(self.parse_directive_operand()?);
                     }
                 }
-                StatementKind::Directive(directive, operands)
+                StatementKind::Directive(DirectiveKind::from(directive.as_str()), operands)
             },
 
             Token::Newline => {
@@ -430,11 +478,11 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let nodes = parser.parse().unwrap();
         assert_eq!(nodes.len(), 3);
-        assert_eq!(nodes[0].kind, StatementKind::Directive(".data".to_string(), vec![]));
+        assert_eq!(nodes[0].kind, StatementKind::Directive(DirectiveKind::Data, vec![]));
         assert_eq!(nodes[0].line, 1);
         assert_eq!(nodes[1].kind, StatementKind::Label("myVar".to_string()));
         assert_eq!(nodes[1].line, 2);
-        assert_eq!(nodes[2].kind, StatementKind::Directive(".word".to_string(), vec![
+        assert_eq!(nodes[2].kind, StatementKind::Directive(DirectiveKind::Word, vec![
             Operand::Immediate(42),
         ]));
         assert_eq!(nodes[2].line, 2);
@@ -446,7 +494,8 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let nodes = parser.parse().unwrap();
         assert_eq!(nodes.len(), 1);
-        assert_eq!(nodes[0].kind, StatementKind::Directive(".asciiz".to_string(), vec![
+        // .asciiz is normalized to DirectiveKind::Asciz at parse time
+        assert_eq!(nodes[0].kind, StatementKind::Directive(DirectiveKind::Asciz, vec![
             Operand::StringLiteral("Hello, world!".to_string()),
         ]));
         assert_eq!(nodes[0].line, 1);

@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::parser::{Statement, StatementKind, Operand, Section};
+use crate::parser::{Statement, StatementKind, Operand, Section, DirectiveKind};
 
 pub struct SymbolTable {
     symbols: HashMap<String, u32>,
@@ -24,10 +24,10 @@ impl SymbolTable {
 
         for stmt in statements {
             match &stmt.kind {
-                StatementKind::Directive(name, _) if name == ".text" => {
+                StatementKind::Directive(DirectiveKind::Text, _) => {
                     current_section = Section::Text;
                 }
-                StatementKind::Directive(name, _) if name == ".data" => {
+                StatementKind::Directive(DirectiveKind::Data, _) => {
                     current_section = Section::Data;
                 }
 
@@ -49,14 +49,14 @@ impl SymbolTable {
                     }
                 }
 
-                StatementKind::Directive(name, operands) => {
+                StatementKind::Directive(kind, operands) => {
                     let current_pc = if current_section == Section::Text {
                         self.text_base + text_offset
                     } else {
                         self.data_base + data_offset
                     };
 
-                    let size = self.calculate_directive_size(name, operands, current_pc)?;
+                    let size = self.calculate_directive_size(kind, operands, current_pc)?;
 
                     if current_section == Section::Text {
                         text_offset += size;
@@ -71,9 +71,9 @@ impl SymbolTable {
 
 
     // Size in bytes that the directive will occupy in memory
-    fn calculate_directive_size(&self, name: &str, operands: &[Operand], current_pc: u32) -> Result<u32, String> {
-        match name {
-            ".align" => {
+    fn calculate_directive_size(&self, kind: &DirectiveKind, operands: &[Operand], current_pc: u32) -> Result<u32, String> {
+        match kind {
+            DirectiveKind::Align => {
                 if let Some(Operand::Immediate(pow)) = operands.get(0) {
                     let alignment = 2u32.pow(*pow as u32);
                     let aligned_pc = (current_pc + alignment - 1) & !(alignment - 1);
@@ -81,33 +81,42 @@ impl SymbolTable {
                 } else {
                     Err("Directive .align requires a power of 2 parameter".into())
                 }
-            },
-            ".word"  => Ok((operands.len() as u32) * 4),
-            ".half"  => Ok((operands.len() as u32) * 2),
-            ".byte"  => Ok(operands.len() as u32),
-            ".ascii" | ".asciz" | ".string" => {
+            }
+            DirectiveKind::Word  => Ok((operands.len() as u32) * 4),
+            DirectiveKind::Half  => Ok((operands.len() as u32) * 2),
+            DirectiveKind::Byte  => Ok(operands.len() as u32),
+            DirectiveKind::Ascii => {
                 let mut total = 0;
-                let has_null = name != ".ascii";
-
                 for op in operands {
                     if let Operand::StringLiteral(s) = op {
                         total += s.len() as u32;
-                        if has_null { total += 1; }
                     } else {
-                        return Err(format!("Directive {} requires a string literal", name));
+                        return Err("Directive .ascii requires a string literal".into());
                     }
                 }
                 Ok(total)
-            },
-            // TODO review
-            ".space" => {
+            }
+            DirectiveKind::Asciz => {
+                let mut total = 0;
+                for op in operands {
+                    if let Operand::StringLiteral(s) = op {
+                        total += s.len() as u32 + 1; // +1 for null terminator
+                    } else {
+                        return Err("Directive .asciz requires a string literal".into());
+                    }
+                }
+                Ok(total)
+            }
+            DirectiveKind::Space => {
                 if let Some(Operand::Immediate(n)) = operands.get(0) {
                     Ok(*n as u32)
                 } else {
                     Err("Directive .space requires an immediate value".into())
                 }
-            },
-            _ => Err(format!("Unknown directive '{}'", name)),
+            }
+            DirectiveKind::Unknown(name) => Err(format!("Unknown directive '{}'", name)),
+            // Section switches are handled before calculate_directive_size is called.
+            DirectiveKind::Text | DirectiveKind::Data => Ok(0),
         }
     }
 
