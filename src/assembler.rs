@@ -283,7 +283,10 @@ fn encode_i_type(opcode: u8, funct3: u8, ops: &[Operand], sym_table: &SymbolTabl
         (0x13 | 0x67, [Operand::Register(rd), Operand::Register(rs1), imm]) => {
             (*rd, *rs1, imm)
         },
-        // TODO: jalr with memory offset, is a pseudo-instruction, so allow both: 3 parameters with inmediate or 2 with memory offset
+        // jalr: rd, offset(rs1)
+        (0x67, [Operand::Register(rd), mem @ Operand::Memory { reg, .. }]) => {
+            (*rd, *reg, mem)
+        },
         _ => return Err("Invalid operands for I-type instruction".to_string()),
     };
 
@@ -673,6 +676,26 @@ mod tests {
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].line, 35);
         assert!(errors[0].message.contains("Unsupported directive '.float'"));
+    }
+
+    #[test]
+    fn test_jalr_memory_offset_form() {
+        let source = "jalr x0, 0(x1)\njalr x5, -4(x2)";
+        let tokens = crate::lexer::tokenize(source).unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let sym_table = crate::symbols::SymbolTable::new(0, 0);
+        let asm = Assembler::new(0, 0);
+        let program = asm.assemble(&stmts, &sym_table).expect("should assemble");
+
+        let words: Vec<u32> = program.text_bin.chunks(4)
+            .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+            .collect();
+
+        // jalr x0, 0(x1): imm=0, rs1=1, funct3=0, rd=0, opcode=0x67
+        assert_eq!(words[0], 0x00008067, "jalr x0, 0(x1)");
+        // jalr x5, -4(x2): imm=-4=0xFFC, rs1=2, funct3=0, rd=5, opcode=0x67
+        assert_eq!(words[1], 0xFFC102E7, "jalr x5, -4(x2)");
     }
 
     #[test]

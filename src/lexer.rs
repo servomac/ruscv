@@ -624,8 +624,6 @@ mod tests {
         assert_eq!(tokens[4].token, Token::Comma);
         assert_eq!(tokens[5].token, Token::Immediate(255)); // 0xFF is 255 in decimal
     }
-    // TODO test lines and columns in SpannedToken
-
     #[test]
     fn test_column_tracking() {
         // Test that strings and numbers store the START column
