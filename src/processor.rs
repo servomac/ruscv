@@ -11,9 +11,12 @@ pub struct Processor {
     data_base: u32,
     stack_base: u32,
     stack_size: usize,
-    // Minimal CSR state needed to run rv32ui test preamble
+    // M-mode CSR state
     mtvec: u32,
+    mstatus: u32,
+    mepc: u32,
     mcause: u32,
+    mscratch: u32,
 }
 
 #[derive(Debug, PartialEq)]
@@ -86,8 +89,9 @@ enum Instruction {
     // System
     Ecall,
     Ebreak,
-    // Zicsr: minimal CSR support — tracks mtvec/mcause, everything else is no-op
-    Csr { rd: usize, csr_addr: u32, write_val: u32 },
+    // Zicsr: CSR access; func3 distinguishes RW/RS/RC and register vs immediate variants
+    Csr { rd: usize, csr_addr: u32, write_val: u32, func3: u32 },
+    Mret,
     // Fence / Fence.I: no-op in a simple in-order emulator
     Fence,
 }
@@ -127,7 +131,10 @@ impl Processor {
             stack_base,
             stack_size,
             mtvec: 0,
+            mstatus: 0,
+            mepc: 0,
             mcause: 0,
+            mscratch: 0,
         }
     }
 
@@ -162,7 +169,10 @@ impl Processor {
             stack_base,
             stack_size,
             mtvec: 0,
+            mstatus: 0,
+            mepc: 0,
             mcause: 0,
+            mscratch: 0,
         }
     }
 
@@ -381,15 +391,16 @@ impl Processor {
             } else {
                 self.read_register(rs1)
             };
-            return Ok(Instruction::Csr { rd, csr_addr, write_val });
+            return Ok(Instruction::Csr { rd, csr_addr, write_val, func3 });
         }
 
         let imm = (memory_instruction >> 20) & 0xFFF;
         match imm {
             0x000 => Ok(Instruction::Ecall),
             0x001 => Ok(Instruction::Ebreak),
-            // mret, sret, wfi and other privileged instructions — no-op
-            _ => Ok(Instruction::Csr { rd: 0, csr_addr: 0, write_val: 0 }),
+            0x302 => Ok(Instruction::Mret),
+            // sret, wfi, and other privileged instructions — no-op
+            _ => Ok(Instruction::Csr { rd: 0, csr_addr: 0, write_val: 0, func3: 0 }),
         }
     }
 
@@ -581,29 +592,64 @@ impl Processor {
                 self.write_register(rd, self.pc.wrapping_add(imm as u32));
             },
             Instruction::Ebreak => return Err(StepError::Ebreak),
-            Instruction::Csr { rd, csr_addr, write_val } => {
-                const MTVEC:  u32 = 0x305;
-                const MCAUSE: u32 = 0x342;
-                // Read side: return tracked value for mcause, 0 for everything else
+            Instruction::Csr { rd, csr_addr, write_val, func3 } => {
+                const MSTATUS:  u32 = 0x300;
+                const MTVEC:    u32 = 0x305;
+                const MSCRATCH: u32 = 0x340;
+                const MEPC:     u32 = 0x341;
+                const MCAUSE:   u32 = 0x342;
+
                 let read_val = match csr_addr {
-                    MCAUSE => self.mcause,
+                    MSTATUS  => self.mstatus,
+                    MTVEC    => self.mtvec,
+                    MSCRATCH => self.mscratch,
+                    MEPC     => self.mepc,
+                    MCAUSE   => self.mcause,
                     _ => 0,
                 };
                 self.write_register(rd, read_val);
-                // Write side: only track mtvec; all other CSR writes are silently ignored
-                if csr_addr == MTVEC {
-                    self.mtvec = write_val;
+
+                // Compute new CSR value and whether to write it.
+                // For RS/RC variants, a zero write_val means read-only (no side-effects).
+                let (new_val, do_write) = match func3 {
+                    1 | 5 => (write_val, true),
+                    2 | 6 => (read_val | write_val,  write_val != 0),
+                    3 | 7 => (read_val & !write_val, write_val != 0),
+                    _     => (write_val, false),
+                };
+                if do_write {
+                    match csr_addr {
+                        MSTATUS  => self.mstatus  = new_val,
+                        MTVEC    => self.mtvec    = new_val,
+                        MSCRATCH => self.mscratch = new_val,
+                        MEPC     => self.mepc     = new_val,
+                        MCAUSE   => self.mcause   = new_val,
+                        _ => {},
+                    }
                 }
             },
             Instruction::Fence => {
                 // No-op: single-core in-order emulator has no reordering to fence.
             },
             Instruction::Ecall => {
-                // Simulate M-mode ecall: set mcause=11, jump to trap handler (mtvec)
-                self.mcause = 11;
-                next_pc = self.mtvec;
+                // Save PC of the ecall instruction so the handler can return past it
+                // by incrementing mepc before mret.
+                self.mepc   = self.pc;
+                self.mcause = 11; // Environment call from M-mode
+                // Save MIE into MPIE, then disable interrupts (MIE = 0).
+                let mie = (self.mstatus >> 3) & 1;
+                self.mstatus = (self.mstatus & !(1 << 7)) | (mie << 7); // MPIE = MIE
+                self.mstatus &= !(1 << 3);                               // MIE  = 0
+                // mtvec direct mode: mask off the two mode bits before jumping.
+                next_pc = self.mtvec & !3;
             },
-            _ => return Err(StepError::IllegalInstruction),
+            Instruction::Mret => {
+                // Restore MIE from MPIE, then set MPIE = 1 (spec default after mret).
+                let mpie = (self.mstatus >> 7) & 1;
+                self.mstatus = (self.mstatus & !(1 << 3)) | (mpie << 3); // MIE  = MPIE
+                self.mstatus |= 1 << 7;                                   // MPIE = 1
+                next_pc = self.mepc;
+            },
         }
 
         self.pc = next_pc;
@@ -1024,6 +1070,76 @@ mod tests {
         // when PC=0, result is just imm
         assert_eq!(p.read_register(1), 0x12345000);
     }
+    // ---- M-mode trap save/restore (Step 1) ----
+
+    #[test]
+    fn test_ecall_saves_mepc_and_jumps_to_mtvec() {
+        let mut p = Processor::new(0x1000, 0, 0, 0);
+        p.mtvec = 0x2000;
+        p.pc    = 0x1004;
+        p.execute(Instruction::Ecall).unwrap();
+        assert_eq!(p.mepc,   0x1004); // saved PC of the ecall
+        assert_eq!(p.mcause, 11);     // environment call from M-mode
+        assert_eq!(p.pc,     0x2000); // jumped to mtvec
+    }
+
+    #[test]
+    fn test_ecall_clears_mie_and_saves_mpie() {
+        let mut p = Processor::new(0, 0, 0, 0);
+        p.mstatus = 1 << 3; // MIE = 1
+        p.execute(Instruction::Ecall).unwrap();
+        assert_eq!((p.mstatus >> 3) & 1, 0); // MIE cleared
+        assert_eq!((p.mstatus >> 7) & 1, 1); // MPIE = old MIE
+    }
+
+    #[test]
+    fn test_mret_restores_mepc_and_mie() {
+        let mut p = Processor::new(0, 0, 0, 0);
+        p.mepc    = 0x1008; // return address (ecall PC + 4, set by handler)
+        p.mstatus = 1 << 7; // MPIE = 1, MIE = 0
+        p.execute(Instruction::Mret).unwrap();
+        assert_eq!(p.pc, 0x1008);             // jumped to mepc
+        assert_eq!((p.mstatus >> 3) & 1, 1); // MIE restored from MPIE
+        assert_eq!((p.mstatus >> 7) & 1, 1); // MPIE set to 1 after mret
+    }
+
+    #[test]
+    fn test_csr_mscratch_roundtrip() {
+        let mut p = Processor::new(0, 0, 0, 0);
+        p.write_register(1, 0xDEAD_BEEF);
+        // csrw mscratch, x1 — CSRRW rd=x0, csr=0x340
+        p.execute(Instruction::Csr { rd: 0, csr_addr: 0x340, write_val: 0xDEAD_BEEF, func3: 1 }).unwrap();
+        assert_eq!(p.mscratch, 0xDEAD_BEEF);
+        // csrr x2, mscratch — CSRRS rd=x2, rs1=x0 (write_val=0, no write)
+        p.execute(Instruction::Csr { rd: 2, csr_addr: 0x340, write_val: 0, func3: 2 }).unwrap();
+        assert_eq!(p.read_register(2), 0xDEAD_BEEF);
+    }
+
+    #[test]
+    fn test_csr_mstatus_set_and_clear_bits() {
+        let mut p = Processor::new(0, 0, 0, 0);
+        // csrsi mstatus, 0x8 — CSRRSI: set bit 3 (MIE) using uimm=8
+        p.execute(Instruction::Csr { rd: 0, csr_addr: 0x300, write_val: 0x8, func3: 6 }).unwrap();
+        assert_eq!((p.mstatus >> 3) & 1, 1); // MIE now set
+        // csrci mstatus, 0x8 — CSRRCI: clear bit 3 (MIE)
+        p.execute(Instruction::Csr { rd: 0, csr_addr: 0x300, write_val: 0x8, func3: 7 }).unwrap();
+        assert_eq!((p.mstatus >> 3) & 1, 0); // MIE now cleared
+    }
+
+    #[test]
+    fn test_trap_return_full_round_trip() {
+        // Simulate: ecall → handler increments mepc → mret returns past ecall
+        let mut p = Processor::new(0, 0, 0, 0);
+        p.mtvec = 0x2000;
+        p.pc    = 0x1000;
+        p.execute(Instruction::Ecall).unwrap();
+        assert_eq!(p.pc, 0x2000);
+        // Handler: advance mepc past the ecall (mepc += 4)
+        p.mepc += 4;
+        p.execute(Instruction::Mret).unwrap();
+        assert_eq!(p.pc, 0x1004); // returned past the ecall
+    }
+
     #[test]
     fn test_processor_initializes_sp() {
         let text_base = 0x1000;
