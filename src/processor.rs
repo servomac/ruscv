@@ -2,6 +2,71 @@ use std::sync::{Arc, Mutex};
 use crate::bus::{Bus, Ram, Rom, MmioDevice, Clint, ClintState, Uart, AccessSize, MemoryFault};
 use crate::elf_loader::ElfImage;
 
+// CSR addresses as specified by the RISC-V M-mode privileged ISA.
+const MSTATUS:  u32 = 0x300;
+const MIE_CSR:  u32 = 0x304;
+const MTVEC:    u32 = 0x305;
+const MSCRATCH: u32 = 0x340;
+const MEPC:     u32 = 0x341;
+const MCAUSE:   u32 = 0x342;
+const MIP:      u32 = 0x344;
+
+struct CsrFile {
+    mstatus:  u32,
+    mtvec:    u32,
+    mscratch: u32,
+    mepc:     u32,
+    mcause:   u32,
+    // mie: interrupt enable mask (bit 7 = MTIE: machine timer interrupt enable)
+    mie:      u32,
+    // mip: interrupt pending; MTIP (bit 7) is set/cleared by CLINT hardware, not CSR writes
+    mip:      u32,
+}
+
+impl CsrFile {
+    fn new() -> Self {
+        Self { mstatus: 0, mtvec: 0, mscratch: 0, mepc: 0, mcause: 0, mie: 0, mip: 0 }
+    }
+
+    fn read(&self, addr: u32) -> u32 {
+        match addr {
+            MSTATUS  => self.mstatus,
+            MIE_CSR  => self.mie,
+            MTVEC    => self.mtvec,
+            MSCRATCH => self.mscratch,
+            MEPC     => self.mepc,
+            MCAUSE   => self.mcause,
+            MIP      => self.mip,
+            _        => 0,
+        }
+    }
+
+    // Apply a CSR instruction write. func3 encodes the operation:
+    //   1/5 = CSRRW/CSRRWI: replace
+    //   2/6 = CSRRS/CSRRSI: set bits
+    //   3/7 = CSRRC/CSRRCI: clear bits
+    // For RS/RC, write_val == 0 is a no-op (pure read, no side effects).
+    fn write(&mut self, addr: u32, func3: u32, write_val: u32) {
+        let old = self.read(addr);
+        let (new_val, do_write) = match func3 {
+            1 | 5 => (write_val,        true),
+            2 | 6 => (old | write_val,  write_val != 0),
+            3 | 7 => (old & !write_val, write_val != 0),
+            _     => (write_val,        false),
+        };
+        if !do_write { return; }
+        match addr {
+            MSTATUS  => self.mstatus  = new_val,
+            MIE_CSR  => self.mie      = new_val,
+            MTVEC    => self.mtvec    = new_val,
+            MSCRATCH => self.mscratch = new_val,
+            MEPC     => self.mepc     = new_val,
+            MCAUSE   => self.mcause   = new_val,
+            // mip is hardware-driven; software writes are silently ignored.
+            _ => {},
+        }
+    }
+}
 
 pub struct Processor {
     pc: u32,
@@ -12,17 +77,8 @@ pub struct Processor {
     data_base: u32,
     stack_base: u32,
     stack_size: usize,
-    // M-mode CSR state
-    mtvec: u32,
-    mstatus: u32,
-    mepc: u32,
-    mcause: u32,
-    mscratch: u32,
-    // mie — interrupt enable mask (bit 7 = MTIE: machine timer interrupt enable)
-    mie: u32,
-    // mip — interrupt pending flags; MTIP (bit 7) is set/cleared by the CLINT hardware,
-    // not by software CSR writes.
-    mip: u32,
+    // All M-mode CSR registers
+    csrs: CsrFile,
     // Shared with the Clint bus device so the processor can increment mtime and read
     // mtimecmp without going through the bus on every step.
     clint_state: Arc<Mutex<ClintState>>,
@@ -145,13 +201,7 @@ impl Processor {
             data_base,
             stack_base,
             stack_size,
-            mtvec: 0,
-            mstatus: 0,
-            mepc: 0,
-            mcause: 0,
-            mscratch: 0,
-            mie: 0,
-            mip: 0,
+            csrs: CsrFile::new(),
             clint_state,
             uart_output,
         }
@@ -188,13 +238,7 @@ impl Processor {
             data_base: 0,
             stack_base,
             stack_size,
-            mtvec: 0,
-            mstatus: 0,
-            mepc: 0,
-            mcause: 0,
-            mscratch: 0,
-            mie: 0,
-            mip: 0,
+            csrs: CsrFile::new(),
             clint_state,
             uart_output,
         }
@@ -234,9 +278,9 @@ impl Processor {
         let mut clint = self.clint_state.lock().unwrap();
         clint.mtime = clint.mtime.wrapping_add(1);
         if clint.mtime >= clint.mtimecmp {
-            self.mip |= 1 << 7;   // set   MTIP
+            self.csrs.mip |= 1 << 7;   // set   MTIP
         } else {
-            self.mip &= !(1 << 7); // clear MTIP
+            self.csrs.mip &= !(1 << 7); // clear MTIP
         }
     }
 
@@ -244,20 +288,20 @@ impl Processor {
     // mstatus.MIE (global enable), mie.MTIE (timer enable), mip.MTIP (pending).
     // Returns true if an interrupt was taken (step should skip the normal fetch/decode/execute).
     fn check_and_deliver_interrupt(&mut self) -> bool {
-        let globally_enabled = (self.mstatus >> 3) & 1 == 1;
-        let timer_enabled    = (self.mie     >> 7) & 1 == 1;
-        let timer_pending    = (self.mip     >> 7) & 1 == 1;
+        let globally_enabled = (self.csrs.mstatus >> 3) & 1 == 1;
+        let timer_enabled    = (self.csrs.mie     >> 7) & 1 == 1;
+        let timer_pending    = (self.csrs.mip     >> 7) & 1 == 1;
 
         if !(globally_enabled && timer_enabled && timer_pending) {
             return false;
         }
 
-        self.mepc   = self.pc;
-        self.mcause = 0x8000_0007; // bit 31 = interrupt, cause 7 = machine timer
-        let mie_bit = (self.mstatus >> 3) & 1;
-        self.mstatus = (self.mstatus & !(1 << 7)) | (mie_bit << 7); // MPIE = MIE
-        self.mstatus &= !(1 << 3);                                   // MIE  = 0
-        self.pc = self.mtvec & !3; // direct mode: jump to BASE
+        self.csrs.mepc   = self.pc;
+        self.csrs.mcause = 0x8000_0007; // bit 31 = interrupt, cause 7 = machine timer
+        let mie_bit = (self.csrs.mstatus >> 3) & 1;
+        self.csrs.mstatus = (self.csrs.mstatus & !(1 << 7)) | (mie_bit << 7); // MPIE = MIE
+        self.csrs.mstatus &= !(1 << 3);                                   // MIE  = 0
+        self.pc = self.csrs.mtvec & !3; // direct mode: jump to BASE
         true
     }
 
@@ -655,46 +699,9 @@ impl Processor {
             },
             Instruction::Ebreak => return Err(StepError::Ebreak),
             Instruction::Csr { rd, csr_addr, write_val, func3 } => {
-                const MSTATUS:  u32 = 0x300;
-                const MIE:      u32 = 0x304;
-                const MTVEC:    u32 = 0x305;
-                const MSCRATCH: u32 = 0x340;
-                const MEPC:     u32 = 0x341;
-                const MCAUSE:   u32 = 0x342;
-                const MIP:      u32 = 0x344;
-
-                let read_val = match csr_addr {
-                    MSTATUS  => self.mstatus,
-                    MIE      => self.mie,
-                    MTVEC    => self.mtvec,
-                    MSCRATCH => self.mscratch,
-                    MEPC     => self.mepc,
-                    MCAUSE   => self.mcause,
-                    MIP      => self.mip,
-                    _ => 0,
-                };
+                let read_val = self.csrs.read(csr_addr);
                 self.write_register(rd, read_val);
-
-                // Compute new CSR value and whether to write it.
-                // For RS/RC variants, a zero write_val means read-only (no side-effects).
-                let (new_val, do_write) = match func3 {
-                    1 | 5 => (write_val, true),
-                    2 | 6 => (read_val | write_val,  write_val != 0),
-                    3 | 7 => (read_val & !write_val, write_val != 0),
-                    _     => (write_val, false),
-                };
-                if do_write {
-                    match csr_addr {
-                        MSTATUS  => self.mstatus  = new_val,
-                        MIE      => self.mie      = new_val,
-                        MTVEC    => self.mtvec    = new_val,
-                        MSCRATCH => self.mscratch = new_val,
-                        MEPC     => self.mepc     = new_val,
-                        MCAUSE   => self.mcause   = new_val,
-                        // mip.MTIP is hardware-driven; software writes to mip are ignored.
-                        _ => {},
-                    }
-                }
+                self.csrs.write(csr_addr, func3, write_val);
             },
             Instruction::Fence => {
                 // No-op: single-core in-order emulator has no reordering to fence.
@@ -702,21 +709,21 @@ impl Processor {
             Instruction::Ecall => {
                 // Save PC of the ecall instruction so the handler can return past it
                 // by incrementing mepc before mret.
-                self.mepc   = self.pc;
-                self.mcause = 11; // Environment call from M-mode
+                self.csrs.mepc   = self.pc;
+                self.csrs.mcause = 11; // Environment call from M-mode
                 // Save MIE into MPIE, then disable interrupts (MIE = 0).
-                let mie = (self.mstatus >> 3) & 1;
-                self.mstatus = (self.mstatus & !(1 << 7)) | (mie << 7); // MPIE = MIE
-                self.mstatus &= !(1 << 3);                               // MIE  = 0
+                let mie = (self.csrs.mstatus >> 3) & 1;
+                self.csrs.mstatus = (self.csrs.mstatus & !(1 << 7)) | (mie << 7); // MPIE = MIE
+                self.csrs.mstatus &= !(1 << 3);                               // MIE  = 0
                 // mtvec direct mode: mask off the two mode bits before jumping.
-                next_pc = self.mtvec & !3;
+                next_pc = self.csrs.mtvec & !3;
             },
             Instruction::Mret => {
                 // Restore MIE from MPIE, then set MPIE = 1 (spec default after mret).
-                let mpie = (self.mstatus >> 7) & 1;
-                self.mstatus = (self.mstatus & !(1 << 3)) | (mpie << 3); // MIE  = MPIE
-                self.mstatus |= 1 << 7;                                   // MPIE = 1
-                next_pc = self.mepc;
+                let mpie = (self.csrs.mstatus >> 7) & 1;
+                self.csrs.mstatus = (self.csrs.mstatus & !(1 << 3)) | (mpie << 3); // MIE  = MPIE
+                self.csrs.mstatus |= 1 << 7;                                   // MPIE = 1
+                next_pc = self.csrs.mepc;
             },
         }
 
@@ -1160,25 +1167,25 @@ mod tests {
     fn test_timer_interrupt_fires_when_enabled() {
         let mut p = Processor::new(0x1000, 0x2000, 0x7FFF_FFF0, 1024);
         p.load(&[0x13, 0x00, 0x00, 0x00], &[]); // nop at 0x1000
-        p.mtvec   = 0x2000;
-        p.mstatus = 1 << 3; // MIE = 1
-        p.mie     = 1 << 7; // MTIE = 1
+        p.csrs.mtvec   = 0x2000;
+        p.csrs.mstatus = 1 << 3; // MIE = 1
+        p.csrs.mie     = 1 << 7; // MTIE = 1
         // Fire immediately: mtimecmp = 0 means mtime (which starts at 0 and becomes 1) >= 0
         p.clint_state.lock().unwrap().mtimecmp = 0;
         p.step().unwrap();
         assert_eq!(p.pc,     0x2000);        // jumped to trap handler
-        assert_eq!(p.mcause, 0x8000_0007);   // timer interrupt
-        assert_eq!(p.mepc,   0x1000);        // saved PC of interrupted instruction
-        assert_eq!((p.mstatus >> 3) & 1, 0); // MIE cleared
+        assert_eq!(p.csrs.mcause, 0x8000_0007);   // timer interrupt
+        assert_eq!(p.csrs.mepc,   0x1000);        // saved PC of interrupted instruction
+        assert_eq!((p.csrs.mstatus >> 3) & 1, 0); // MIE cleared
     }
 
     #[test]
     fn test_timer_interrupt_blocked_when_mie_clear() {
         let mut p = Processor::new(0x1000, 0x2000, 0x7FFF_FFF0, 1024);
         p.load(&[0x13, 0x00, 0x00, 0x00], &[]); // nop
-        p.mtvec   = 0x2000;
-        p.mstatus = 0;      // MIE = 0 — interrupts globally disabled
-        p.mie     = 1 << 7; // MTIE = 1
+        p.csrs.mtvec   = 0x2000;
+        p.csrs.mstatus = 0;      // MIE = 0 — interrupts globally disabled
+        p.csrs.mie     = 1 << 7; // MTIE = 1
         p.clint_state.lock().unwrap().mtimecmp = 0;
         p.step().unwrap();
         assert_eq!(p.pc, 0x1004); // no interrupt — executed the nop normally
@@ -1192,11 +1199,11 @@ mod tests {
         // No interrupt enable so we can observe mip without being redirected.
         p.clint_state.lock().unwrap().mtimecmp = 0; // fires immediately
         p.step().unwrap();
-        assert_eq!((p.mip >> 7) & 1, 1); // MTIP set
+        assert_eq!((p.csrs.mip >> 7) & 1, 1); // MTIP set
         // Advance mtimecmp far into the future
         p.clint_state.lock().unwrap().mtimecmp = u64::MAX;
         p.step().unwrap();
-        assert_eq!((p.mip >> 7) & 1, 0); // MTIP cleared
+        assert_eq!((p.csrs.mip >> 7) & 1, 0); // MTIP cleared
     }
 
     #[test]
@@ -1244,32 +1251,32 @@ mod tests {
     #[test]
     fn test_ecall_saves_mepc_and_jumps_to_mtvec() {
         let mut p = Processor::new(0x1000, 0, 0, 0);
-        p.mtvec = 0x2000;
+        p.csrs.mtvec = 0x2000;
         p.pc    = 0x1004;
         p.execute(Instruction::Ecall).unwrap();
-        assert_eq!(p.mepc,   0x1004); // saved PC of the ecall
-        assert_eq!(p.mcause, 11);     // environment call from M-mode
+        assert_eq!(p.csrs.mepc,   0x1004); // saved PC of the ecall
+        assert_eq!(p.csrs.mcause, 11);     // environment call from M-mode
         assert_eq!(p.pc,     0x2000); // jumped to mtvec
     }
 
     #[test]
     fn test_ecall_clears_mie_and_saves_mpie() {
         let mut p = Processor::new(0, 0, 0, 0);
-        p.mstatus = 1 << 3; // MIE = 1
+        p.csrs.mstatus = 1 << 3; // MIE = 1
         p.execute(Instruction::Ecall).unwrap();
-        assert_eq!((p.mstatus >> 3) & 1, 0); // MIE cleared
-        assert_eq!((p.mstatus >> 7) & 1, 1); // MPIE = old MIE
+        assert_eq!((p.csrs.mstatus >> 3) & 1, 0); // MIE cleared
+        assert_eq!((p.csrs.mstatus >> 7) & 1, 1); // MPIE = old MIE
     }
 
     #[test]
     fn test_mret_restores_mepc_and_mie() {
         let mut p = Processor::new(0, 0, 0, 0);
-        p.mepc    = 0x1008; // return address (ecall PC + 4, set by handler)
-        p.mstatus = 1 << 7; // MPIE = 1, MIE = 0
+        p.csrs.mepc    = 0x1008; // return address (ecall PC + 4, set by handler)
+        p.csrs.mstatus = 1 << 7; // MPIE = 1, MIE = 0
         p.execute(Instruction::Mret).unwrap();
         assert_eq!(p.pc, 0x1008);             // jumped to mepc
-        assert_eq!((p.mstatus >> 3) & 1, 1); // MIE restored from MPIE
-        assert_eq!((p.mstatus >> 7) & 1, 1); // MPIE set to 1 after mret
+        assert_eq!((p.csrs.mstatus >> 3) & 1, 1); // MIE restored from MPIE
+        assert_eq!((p.csrs.mstatus >> 7) & 1, 1); // MPIE set to 1 after mret
     }
 
     #[test]
@@ -1278,7 +1285,7 @@ mod tests {
         p.write_register(1, 0xDEAD_BEEF);
         // csrw mscratch, x1 — CSRRW rd=x0, csr=0x340
         p.execute(Instruction::Csr { rd: 0, csr_addr: 0x340, write_val: 0xDEAD_BEEF, func3: 1 }).unwrap();
-        assert_eq!(p.mscratch, 0xDEAD_BEEF);
+        assert_eq!(p.csrs.mscratch, 0xDEAD_BEEF);
         // csrr x2, mscratch — CSRRS rd=x2, rs1=x0 (write_val=0, no write)
         p.execute(Instruction::Csr { rd: 2, csr_addr: 0x340, write_val: 0, func3: 2 }).unwrap();
         assert_eq!(p.read_register(2), 0xDEAD_BEEF);
@@ -1289,22 +1296,22 @@ mod tests {
         let mut p = Processor::new(0, 0, 0, 0);
         // csrsi mstatus, 0x8 — CSRRSI: set bit 3 (MIE) using uimm=8
         p.execute(Instruction::Csr { rd: 0, csr_addr: 0x300, write_val: 0x8, func3: 6 }).unwrap();
-        assert_eq!((p.mstatus >> 3) & 1, 1); // MIE now set
+        assert_eq!((p.csrs.mstatus >> 3) & 1, 1); // MIE now set
         // csrci mstatus, 0x8 — CSRRCI: clear bit 3 (MIE)
         p.execute(Instruction::Csr { rd: 0, csr_addr: 0x300, write_val: 0x8, func3: 7 }).unwrap();
-        assert_eq!((p.mstatus >> 3) & 1, 0); // MIE now cleared
+        assert_eq!((p.csrs.mstatus >> 3) & 1, 0); // MIE now cleared
     }
 
     #[test]
     fn test_trap_return_full_round_trip() {
         // Simulate: ecall → handler increments mepc → mret returns past ecall
         let mut p = Processor::new(0, 0, 0, 0);
-        p.mtvec = 0x2000;
+        p.csrs.mtvec = 0x2000;
         p.pc    = 0x1000;
         p.execute(Instruction::Ecall).unwrap();
         assert_eq!(p.pc, 0x2000);
         // Handler: advance mepc past the ecall (mepc += 4)
-        p.mepc += 4;
+        p.csrs.mepc += 4;
         p.execute(Instruction::Mret).unwrap();
         assert_eq!(p.pc, 0x1004); // returned past the ecall
     }
