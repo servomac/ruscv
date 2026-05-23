@@ -1,5 +1,5 @@
 use std::sync::{Arc, Mutex};
-use crate::bus::{Bus, Ram, Rom, MmioDevice, Uart, AccessSize, MemoryFault};
+use crate::bus::{Bus, Ram, Rom, MmioDevice, Clint, ClintState, Uart, AccessSize, MemoryFault};
 use crate::elf_loader::ElfImage;
 
 
@@ -18,6 +18,14 @@ pub struct Processor {
     mepc: u32,
     mcause: u32,
     mscratch: u32,
+    // mie — interrupt enable mask (bit 7 = MTIE: machine timer interrupt enable)
+    mie: u32,
+    // mip — interrupt pending flags; MTIP (bit 7) is set/cleared by the CLINT hardware,
+    // not by software CSR writes.
+    mip: u32,
+    // Shared with the Clint bus device so the processor can increment mtime and read
+    // mtimecmp without going through the bus on every step.
+    clint_state: Arc<Mutex<ClintState>>,
     // UART output buffer shared with the Uart bus device
     uart_output: Arc<Mutex<Vec<u8>>>,
 }
@@ -99,8 +107,12 @@ enum Instruction {
     Fence,
 }
 
-fn register_platform_devices(bus: &mut Bus, uart_output: Arc<Mutex<Vec<u8>>>) {
-    bus.add_device(crate::config::CLINT_BASE, crate::config::CLINT_SIZE, Box::new(MmioDevice::new("CLINT")));
+fn register_platform_devices(
+    bus: &mut Bus,
+    clint_state: Arc<Mutex<ClintState>>,
+    uart_output: Arc<Mutex<Vec<u8>>>,
+) {
+    bus.add_device(crate::config::CLINT_BASE, crate::config::CLINT_SIZE, Box::new(Clint::new(clint_state)));
     bus.add_device(crate::config::PLIC_BASE, crate::config::PLIC_SIZE, Box::new(MmioDevice::new("PLIC")));
     bus.add_device(crate::config::UART_BASE, crate::config::UART_SIZE, Box::new(Uart::new(uart_output)));
 }
@@ -111,8 +123,9 @@ impl Processor {
         registers[2] = stack_base;
 
         let mut bus = Bus::new();
+        let clint_state = Arc::new(Mutex::new(ClintState { mtime: 0, mtimecmp: u64::MAX }));
         let uart_output = Arc::new(Mutex::new(Vec::new()));
-        register_platform_devices(&mut bus, Arc::clone(&uart_output));
+        register_platform_devices(&mut bus, Arc::clone(&clint_state), Arc::clone(&uart_output));
 
         // Initial regions for backward compatibility with existing tests
         // and current assembler/loader expectations.
@@ -137,6 +150,9 @@ impl Processor {
             mepc: 0,
             mcause: 0,
             mscratch: 0,
+            mie: 0,
+            mip: 0,
+            clint_state,
             uart_output,
         }
     }
@@ -149,8 +165,9 @@ impl Processor {
         registers[2] = stack_base; // sp
 
         let mut bus = Bus::new();
+        let clint_state = Arc::new(Mutex::new(ClintState { mtime: 0, mtimecmp: u64::MAX }));
         let uart_output = Arc::new(Mutex::new(Vec::new()));
-        register_platform_devices(&mut bus, Arc::clone(&uart_output));
+        register_platform_devices(&mut bus, Arc::clone(&clint_state), Arc::clone(&uart_output));
 
         // Map every ELF PT_LOAD segment as writable RAM so self-modifying
         // tests (fence_i) work without needing separate ROM regions.
@@ -176,6 +193,9 @@ impl Processor {
             mepc: 0,
             mcause: 0,
             mscratch: 0,
+            mie: 0,
+            mip: 0,
+            clint_state,
             uart_output,
         }
     }
@@ -197,10 +217,48 @@ impl Processor {
     }
 
     pub fn step(&mut self) -> Result<(), StepError> {
+        self.tick_timer();
+        if self.check_and_deliver_interrupt() {
+            return Ok(());
+        }
         let memory_instruction = self.fetch()?;
         let instruction = self.decode(memory_instruction)?;
         self.execute(instruction)?;
         Ok(())
+    }
+
+    // Advance mtime by one tick and recompute MTIP.
+    // MTIP is level-triggered: it stays set as long as mtime >= mtimecmp.
+    // The OS clears it by writing a new future value to mtimecmp.
+    fn tick_timer(&mut self) {
+        let mut clint = self.clint_state.lock().unwrap();
+        clint.mtime = clint.mtime.wrapping_add(1);
+        if clint.mtime >= clint.mtimecmp {
+            self.mip |= 1 << 7;   // set   MTIP
+        } else {
+            self.mip &= !(1 << 7); // clear MTIP
+        }
+    }
+
+    // Deliver a pending machine timer interrupt if all three gates are open:
+    // mstatus.MIE (global enable), mie.MTIE (timer enable), mip.MTIP (pending).
+    // Returns true if an interrupt was taken (step should skip the normal fetch/decode/execute).
+    fn check_and_deliver_interrupt(&mut self) -> bool {
+        let globally_enabled = (self.mstatus >> 3) & 1 == 1;
+        let timer_enabled    = (self.mie     >> 7) & 1 == 1;
+        let timer_pending    = (self.mip     >> 7) & 1 == 1;
+
+        if !(globally_enabled && timer_enabled && timer_pending) {
+            return false;
+        }
+
+        self.mepc   = self.pc;
+        self.mcause = 0x8000_0007; // bit 31 = interrupt, cause 7 = machine timer
+        let mie_bit = (self.mstatus >> 3) & 1;
+        self.mstatus = (self.mstatus & !(1 << 7)) | (mie_bit << 7); // MPIE = MIE
+        self.mstatus &= !(1 << 3);                                   // MIE  = 0
+        self.pc = self.mtvec & !3; // direct mode: jump to BASE
+        true
     }
 
     fn fetch(&self) -> Result<u32, StepError> {
@@ -598,17 +656,21 @@ impl Processor {
             Instruction::Ebreak => return Err(StepError::Ebreak),
             Instruction::Csr { rd, csr_addr, write_val, func3 } => {
                 const MSTATUS:  u32 = 0x300;
+                const MIE:      u32 = 0x304;
                 const MTVEC:    u32 = 0x305;
                 const MSCRATCH: u32 = 0x340;
                 const MEPC:     u32 = 0x341;
                 const MCAUSE:   u32 = 0x342;
+                const MIP:      u32 = 0x344;
 
                 let read_val = match csr_addr {
                     MSTATUS  => self.mstatus,
+                    MIE      => self.mie,
                     MTVEC    => self.mtvec,
                     MSCRATCH => self.mscratch,
                     MEPC     => self.mepc,
                     MCAUSE   => self.mcause,
+                    MIP      => self.mip,
                     _ => 0,
                 };
                 self.write_register(rd, read_val);
@@ -624,10 +686,12 @@ impl Processor {
                 if do_write {
                     match csr_addr {
                         MSTATUS  => self.mstatus  = new_val,
+                        MIE      => self.mie      = new_val,
                         MTVEC    => self.mtvec    = new_val,
                         MSCRATCH => self.mscratch = new_val,
                         MEPC     => self.mepc     = new_val,
                         MCAUSE   => self.mcause   = new_val,
+                        // mip.MTIP is hardware-driven; software writes to mip are ignored.
                         _ => {},
                     }
                 }
@@ -1079,6 +1143,72 @@ mod tests {
         // when PC=0, result is just imm
         assert_eq!(p.read_register(1), 0x12345000);
     }
+    // ---- CLINT timer (Step 3) ----
+
+    #[test]
+    fn test_mtime_increments_each_step() {
+        let mut p = Processor::new(0x1000, 0x2000, 0x7FFF_FFF0, 1024);
+        // load a nop (addi x0, x0, 0) so step() doesn't fault
+        p.load(&[0x13, 0x00, 0x00, 0x00], &[]);
+        let before = p.clint_state.lock().unwrap().mtime;
+        p.step().unwrap();
+        let after = p.clint_state.lock().unwrap().mtime;
+        assert_eq!(after, before + 1);
+    }
+
+    #[test]
+    fn test_timer_interrupt_fires_when_enabled() {
+        let mut p = Processor::new(0x1000, 0x2000, 0x7FFF_FFF0, 1024);
+        p.load(&[0x13, 0x00, 0x00, 0x00], &[]); // nop at 0x1000
+        p.mtvec   = 0x2000;
+        p.mstatus = 1 << 3; // MIE = 1
+        p.mie     = 1 << 7; // MTIE = 1
+        // Fire immediately: mtimecmp = 0 means mtime (which starts at 0 and becomes 1) >= 0
+        p.clint_state.lock().unwrap().mtimecmp = 0;
+        p.step().unwrap();
+        assert_eq!(p.pc,     0x2000);        // jumped to trap handler
+        assert_eq!(p.mcause, 0x8000_0007);   // timer interrupt
+        assert_eq!(p.mepc,   0x1000);        // saved PC of interrupted instruction
+        assert_eq!((p.mstatus >> 3) & 1, 0); // MIE cleared
+    }
+
+    #[test]
+    fn test_timer_interrupt_blocked_when_mie_clear() {
+        let mut p = Processor::new(0x1000, 0x2000, 0x7FFF_FFF0, 1024);
+        p.load(&[0x13, 0x00, 0x00, 0x00], &[]); // nop
+        p.mtvec   = 0x2000;
+        p.mstatus = 0;      // MIE = 0 — interrupts globally disabled
+        p.mie     = 1 << 7; // MTIE = 1
+        p.clint_state.lock().unwrap().mtimecmp = 0;
+        p.step().unwrap();
+        assert_eq!(p.pc, 0x1004); // no interrupt — executed the nop normally
+    }
+
+    #[test]
+    fn test_mtip_clears_when_mtimecmp_advanced() {
+        let mut p = Processor::new(0x1000, 0x2000, 0x7FFF_FFF0, 1024);
+        // Two nops so the second step can fetch from 0x1004.
+        p.load(&[0x13, 0x00, 0x00, 0x00, 0x13, 0x00, 0x00, 0x00], &[]);
+        // No interrupt enable so we can observe mip without being redirected.
+        p.clint_state.lock().unwrap().mtimecmp = 0; // fires immediately
+        p.step().unwrap();
+        assert_eq!((p.mip >> 7) & 1, 1); // MTIP set
+        // Advance mtimecmp far into the future
+        p.clint_state.lock().unwrap().mtimecmp = u64::MAX;
+        p.step().unwrap();
+        assert_eq!((p.mip >> 7) & 1, 0); // MTIP cleared
+    }
+
+    #[test]
+    fn test_clint_mtimecmp_readable_via_bus() {
+        let p = Processor::new(0x1000, 0x2000, 0x7FFF_FFF0, 1024);
+        p.clint_state.lock().unwrap().mtimecmp = 0xDEAD_BEEF_1234_5678;
+        let lo = p.bus.read(crate::config::CLINT_BASE + 0x4000, AccessSize::Word).unwrap();
+        let hi = p.bus.read(crate::config::CLINT_BASE + 0x4004, AccessSize::Word).unwrap();
+        assert_eq!(lo, 0x1234_5678);
+        assert_eq!(hi, 0xDEAD_BEEF);
+    }
+
     // ---- UART (Step 2) ----
 
     #[test]

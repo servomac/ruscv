@@ -166,6 +166,63 @@ impl Device for MmioDevice {
     }
 }
 
+// CLINT — Core Local Interruptor
+//
+// The CLINT is a standard RISC-V peripheral that provides two things:
+//   • mtime    — a 64-bit free-running counter (read-only from software in practice,
+//                though technically writable; the processor increments it each step)
+//   • mtimecmp — a 64-bit compare register (writable by software); when
+//                mtime >= mtimecmp the CLINT asserts the machine timer interrupt (MTIP)
+//
+// Standard memory map (single hart, offsets from CLINT base):
+//   0x0000  MSIP      — machine software interrupt pending (unused here)
+//   0x4000  mtimecmp low word
+//   0x4004  mtimecmp high word
+//   0xBFF8  mtime low word
+//   0xBFFC  mtime high word
+//
+// The state is shared with the Processor via Arc<Mutex<>> so the processor can
+// increment mtime and read mtimecmp without going through the bus.
+pub struct ClintState {
+    pub mtime: u64,
+    pub mtimecmp: u64,
+}
+
+pub struct Clint {
+    state: std::sync::Arc<std::sync::Mutex<ClintState>>,
+}
+
+impl Clint {
+    pub fn new(state: std::sync::Arc<std::sync::Mutex<ClintState>>) -> Self {
+        Self { state }
+    }
+}
+
+impl Device for Clint {
+    fn read(&self, addr: u32, _size: AccessSize) -> Result<u32, MemoryFault> {
+        let s = self.state.lock().unwrap();
+        match addr {
+            0x4000 => Ok(s.mtimecmp as u32),
+            0x4004 => Ok((s.mtimecmp >> 32) as u32),
+            0xBFF8 => Ok(s.mtime as u32),
+            0xBFFC => Ok((s.mtime >> 32) as u32),
+            _ => Ok(0),
+        }
+    }
+
+    fn write(&mut self, addr: u32, val: u32, _size: AccessSize) -> Result<(), MemoryFault> {
+        let mut s = self.state.lock().unwrap();
+        match addr {
+            0x4000 => s.mtimecmp = (s.mtimecmp & 0xFFFF_FFFF_0000_0000) | val as u64,
+            0x4004 => s.mtimecmp = (s.mtimecmp & 0x0000_0000_FFFF_FFFF) | ((val as u64) << 32),
+            0xBFF8 => s.mtime = (s.mtime & 0xFFFF_FFFF_0000_0000) | val as u64,
+            0xBFFC => s.mtime = (s.mtime & 0x0000_0000_FFFF_FFFF) | ((val as u64) << 32),
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
 // NS16550-compatible UART — the National Semiconductor NS16550 (1987) defined the
 // register layout that became the PC serial port standard and was copied into most
 // RISC-V boards. QEMU's "virt" machine maps one at 0x1000_0000, so OS code written
