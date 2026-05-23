@@ -158,11 +158,82 @@ impl MmioDevice {
 
 impl Device for MmioDevice {
     fn read(&self, _addr: u32, _size: AccessSize) -> Result<u32, MemoryFault> {
-        // Just return 0 for now as a placeholder
         Ok(0)
     }
 
     fn write(&mut self, _addr: u32, _val: u32, _size: AccessSize) -> Result<(), MemoryFault> {
         Ok(())
+    }
+}
+
+// NS16550-compatible UART — the National Semiconductor NS16550 (1987) defined the
+// register layout that became the PC serial port standard and was copied into most
+// RISC-V boards. QEMU's "virt" machine maps one at 0x1000_0000, so OS code written
+// for QEMU works here without changes.
+//
+// Minimal register map (offsets from base):
+//   0  THR — Transmit Holding Register: write a byte to send it
+//   5  LSR — Line Status Register: bit 5 (THRE) = TX buffer empty, bit 6 (TEMT) = TX idle
+//
+// We implement TX only. The output is buffered in a Vec<u8> shared with the Processor
+// via Arc<Mutex<...>>, so callers can drain it without touching stdout — important for
+// keeping the TUI display clean.
+pub struct Uart {
+    output: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+}
+
+impl Uart {
+    pub fn new(output: std::sync::Arc<std::sync::Mutex<Vec<u8>>>) -> Self {
+        Self { output }
+    }
+}
+
+impl Device for Uart {
+    fn read(&self, addr: u32, _size: AccessSize) -> Result<u32, MemoryFault> {
+        match addr {
+            // LSR bits 5+6 set: TX holding register empty, TX shift register empty.
+            // Returning 0x60 means the transmitter is always ready, so OS polling
+            // loops of the form `while (LSR & 0x20 == 0) {}` exit immediately.
+            5 => Ok(0x60),
+            _ => Ok(0),
+        }
+    }
+
+    fn write(&mut self, addr: u32, val: u32, _size: AccessSize) -> Result<(), MemoryFault> {
+        if addr == 0 {
+            // THR: low byte is the character to transmit.
+            self.output.lock().unwrap().push((val & 0xFF) as u8);
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn test_uart_write_buffers_byte() {
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let mut uart = Uart::new(Arc::clone(&buf));
+        uart.write(0, b'H' as u32, AccessSize::Byte).unwrap();
+        uart.write(0, b'i' as u32, AccessSize::Byte).unwrap();
+        assert_eq!(*buf.lock().unwrap(), b"Hi");
+    }
+
+    #[test]
+    fn test_uart_lsr_reports_ready() {
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let uart = Uart::new(Arc::clone(&buf));
+        assert_eq!(uart.read(5, AccessSize::Byte).unwrap(), 0x60);
+    }
+
+    #[test]
+    fn test_uart_write_to_non_thr_offset_is_ignored() {
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let mut uart = Uart::new(Arc::clone(&buf));
+        uart.write(1, 0xFF, AccessSize::Byte).unwrap(); // IER — not THR
+        assert!(buf.lock().unwrap().is_empty());
     }
 }

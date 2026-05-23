@@ -1,4 +1,5 @@
-use crate::bus::{Bus, Ram, Rom, MmioDevice, AccessSize, MemoryFault};
+use std::sync::{Arc, Mutex};
+use crate::bus::{Bus, Ram, Rom, MmioDevice, Uart, AccessSize, MemoryFault};
 use crate::elf_loader::ElfImage;
 
 
@@ -17,6 +18,8 @@ pub struct Processor {
     mepc: u32,
     mcause: u32,
     mscratch: u32,
+    // UART output buffer shared with the Uart bus device
+    uart_output: Arc<Mutex<Vec<u8>>>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -96,10 +99,10 @@ enum Instruction {
     Fence,
 }
 
-fn register_platform_devices(bus: &mut Bus) {
+fn register_platform_devices(bus: &mut Bus, uart_output: Arc<Mutex<Vec<u8>>>) {
     bus.add_device(crate::config::CLINT_BASE, crate::config::CLINT_SIZE, Box::new(MmioDevice::new("CLINT")));
     bus.add_device(crate::config::PLIC_BASE, crate::config::PLIC_SIZE, Box::new(MmioDevice::new("PLIC")));
-    bus.add_device(crate::config::UART_BASE, crate::config::UART_SIZE, Box::new(MmioDevice::new("UART")));
+    bus.add_device(crate::config::UART_BASE, crate::config::UART_SIZE, Box::new(Uart::new(uart_output)));
 }
 
 impl Processor {
@@ -108,9 +111,8 @@ impl Processor {
         registers[2] = stack_base;
 
         let mut bus = Bus::new();
-
-        // QEMU virt standard devices (placeholders)
-        register_platform_devices(&mut bus);
+        let uart_output = Arc::new(Mutex::new(Vec::new()));
+        register_platform_devices(&mut bus, Arc::clone(&uart_output));
 
         // Initial regions for backward compatibility with existing tests
         // and current assembler/loader expectations.
@@ -135,6 +137,7 @@ impl Processor {
             mepc: 0,
             mcause: 0,
             mscratch: 0,
+            uart_output,
         }
     }
 
@@ -146,8 +149,8 @@ impl Processor {
         registers[2] = stack_base; // sp
 
         let mut bus = Bus::new();
-
-        register_platform_devices(&mut bus);
+        let uart_output = Arc::new(Mutex::new(Vec::new()));
+        register_platform_devices(&mut bus, Arc::clone(&uart_output));
 
         // Map every ELF PT_LOAD segment as writable RAM so self-modifying
         // tests (fence_i) work without needing separate ROM regions.
@@ -173,6 +176,7 @@ impl Processor {
             mepc: 0,
             mcause: 0,
             mscratch: 0,
+            uart_output,
         }
     }
 
@@ -702,6 +706,11 @@ impl Processor {
     pub fn stack_size(&self) -> usize {
         self.stack_size
     }
+
+    /// Drain all bytes written to the UART since the last call.
+    pub fn drain_uart(&mut self) -> Vec<u8> {
+        std::mem::take(&mut *self.uart_output.lock().unwrap())
+    }
 }
 
 #[cfg(test)]
@@ -1070,6 +1079,36 @@ mod tests {
         // when PC=0, result is just imm
         assert_eq!(p.read_register(1), 0x12345000);
     }
+    // ---- UART (Step 2) ----
+
+    #[test]
+    fn test_uart_write_via_bus() {
+        let mut p = Processor::new(0x1000, 0x2000, 0x7FFF_FFF0, 1024);
+        // sw 'A' to UART base (0x1000_0000)
+        p.write_register(1, crate::config::UART_BASE);
+        p.write_register(2, b'A' as u32);
+        p.execute(Instruction::Sb { rs1: 1, rs2: 2, imm: 0 }).unwrap();
+        assert_eq!(p.drain_uart(), b"A");
+    }
+
+    #[test]
+    fn test_uart_lsr_readable_via_bus() {
+        let p = Processor::new(0x1000, 0x2000, 0x7FFF_FFF0, 1024);
+        // Read LSR (offset 5 from UART base)
+        let lsr = p.bus.read(crate::config::UART_BASE + 5, AccessSize::Byte).unwrap();
+        assert_eq!(lsr, 0x60); // THRE + TEMT: TX always ready
+    }
+
+    #[test]
+    fn test_drain_uart_clears_buffer() {
+        let mut p = Processor::new(0x1000, 0x2000, 0x7FFF_FFF0, 1024);
+        p.write_register(1, crate::config::UART_BASE);
+        p.write_register(2, b'X' as u32);
+        p.execute(Instruction::Sb { rs1: 1, rs2: 2, imm: 0 }).unwrap();
+        let _ = p.drain_uart();
+        assert!(p.drain_uart().is_empty()); // second drain is empty
+    }
+
     // ---- M-mode trap save/restore (Step 1) ----
 
     #[test]

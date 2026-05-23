@@ -67,4 +67,8 @@ impl Session {
             }
         }
     }
+
+    pub fn drain_uart(&mut self) -> Vec<u8> {
+        self.processor.drain_uart()
+    }
 }
