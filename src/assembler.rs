@@ -16,36 +16,40 @@ impl AssemblerError {
     }
 }
 
+#[derive(Debug)]
 pub struct DebugInfo {
     pub address_to_source: HashMap<u32, SourceMapping>,
 }
 
+#[derive(Debug)]
 pub struct SourceMapping {
     pub raw_text: String,
     pub line: usize,
     pub section: Section,
 }
 
-pub struct Assembler {
+#[derive(Debug)]
+pub struct AssembledProgram {
     pub text_bin: Vec<u8>,
     pub data_bin: Vec<u8>,
     pub debug_info: DebugInfo,
-    pub text_base: u32,
-    pub data_base: u32,
+}
+
+pub struct Assembler {
+    text_base: u32,
+    data_base: u32,
 }
 
 impl Assembler {
     pub fn new(text_base: u32, data_base: u32) -> Self {
-        Self {
-            text_bin: Vec::new(),
-            data_bin: Vec::new(),
-            debug_info: DebugInfo { address_to_source: HashMap::new() },
-            text_base,
-            data_base,
-        }
+        Self { text_base, data_base }
     }
 
-    pub fn assemble(&mut self, statements: &[Statement], sym_table: &SymbolTable) -> Result<(), Vec<AssemblerError>> {
+    pub fn assemble(&self, statements: &[Statement], sym_table: &SymbolTable) -> Result<AssembledProgram, Vec<AssemblerError>> {
+        let mut text_bin = Vec::new();
+        let mut data_bin = Vec::new();
+        let mut debug_info = DebugInfo { address_to_source: HashMap::new() };
+
         let mut current_pc = self.text_base;
         let mut data_pc = self.data_base;
         let mut current_section = Section::Text;
@@ -54,7 +58,7 @@ impl Assembler {
         for stmt in statements {
             let addr = if current_section == Section::Text { current_pc } else { data_pc };
 
-            self.debug_info.address_to_source.insert(addr, SourceMapping {
+            debug_info.address_to_source.insert(addr, SourceMapping {
                 line: stmt.line,
                 raw_text: stmt.to_string(),
                 section: current_section,
@@ -64,7 +68,7 @@ impl Assembler {
                 StatementKind::Instruction(name, ops) => {
                     match encode_instruction(name, ops, sym_table, current_pc) {
                         Ok(bytes) => {
-                            self.text_bin.extend_from_slice(&bytes.to_le_bytes());
+                            text_bin.extend_from_slice(&bytes.to_le_bytes());
                             current_pc += 4;
                         }
                         Err(msg) => {
@@ -82,10 +86,10 @@ impl Assembler {
                                 let padding = (alignment - (addr % alignment)) % alignment;
                                 let padding_bytes = vec![0u8; padding as usize];
                                 if current_section == Section::Text {
-                                    self.text_bin.extend_from_slice(&padding_bytes);
+                                    text_bin.extend_from_slice(&padding_bytes);
                                     current_pc += padding;
                                 } else {
-                                    self.data_bin.extend_from_slice(&padding_bytes);
+                                    data_bin.extend_from_slice(&padding_bytes);
                                     data_pc += padding;
                                 }
                             } else {
@@ -98,10 +102,10 @@ impl Assembler {
                                 Ok(bytes) => {
                                     // GNU AS allows data directives in .text; emit to the active section.
                                     if current_section == Section::Text {
-                                        self.text_bin.extend_from_slice(&bytes);
+                                        text_bin.extend_from_slice(&bytes);
                                         current_pc += bytes.len() as u32;
                                     } else {
-                                        self.data_bin.extend_from_slice(&bytes);
+                                        data_bin.extend_from_slice(&bytes);
                                         data_pc += bytes.len() as u32;
                                     }
                                 }
@@ -119,10 +123,8 @@ impl Assembler {
         if !errors.is_empty() {
             return Err(errors);
         }
-        Ok(())
+        Ok(AssembledProgram { text_bin, data_bin, debug_info })
     }
-
-
 }
 
 fn encode_instruction(name: &str, ops: &[Operand], sym_table: &SymbolTable, current_pc: u32) -> Result<u32, String> {
@@ -528,7 +530,7 @@ mod tests {
 
     #[test]
     fn test_assemble_simple_program() {
-        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
         let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
@@ -550,12 +552,12 @@ mod tests {
                 line: 3,
             },
         ];
-        assembler.assemble(&statements, &sym_table).expect("Assembly should succeed");
-        assert_eq!(assembler.text_bin.len(), 4);
-        assert_eq!(assembler.data_bin.len(), 4);
+        let program = assembler.assemble(&statements, &sym_table).expect("Assembly should succeed");
+        assert_eq!(program.text_bin.len(), 4);
+        assert_eq!(program.data_bin.len(), 4);
 
         assert_eq!(
-            assembler.text_bin,
+            program.text_bin,
             vec![
                 0b10110011, // Byte 0: rd[0] + opcode
                 0b00000000, // Byte 1: rs1[0] + funct3 + rd[4:1]
@@ -563,12 +565,12 @@ mod tests {
                 0b00000000, // Byte 3: funct7 + rs2[0]
             ]
         );
-        assert_eq!(assembler.data_bin, vec![0x2A, 0x00, 0x00, 0x00]); // .word 42
+        assert_eq!(program.data_bin, vec![0x2A, 0x00, 0x00, 0x00]); // .word 42
     }
 
     #[test]
     fn test_unsupported_instruction() {
-        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
         let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
@@ -591,7 +593,7 @@ mod tests {
 
     #[test]
     fn test_invalid_r_type_operands() {
-        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
         let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
@@ -614,7 +616,7 @@ mod tests {
 
     #[test]
     fn test_invalid_i_type_operands() {
-        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
         let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
@@ -637,7 +639,7 @@ mod tests {
 
     #[test]
     fn test_invalid_s_type_operands() {
-        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
         let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
@@ -659,7 +661,7 @@ mod tests {
 
     #[test]
     fn test_invalid_b_type_operands() {
-        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
         let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
@@ -682,7 +684,7 @@ mod tests {
 
     #[test]
     fn test_invalid_j_type_operands() {
-        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
         let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
@@ -703,7 +705,7 @@ mod tests {
 
     #[test]
     fn test_unsupported_directive() {
-        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
         let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
@@ -730,10 +732,10 @@ mod tests {
         let stmts = parser.parse().unwrap();
         let expanded = crate::pseudo::expand(stmts).unwrap();
         let sym_table = crate::symbols::SymbolTable::new(0, 0);
-        let mut asm = Assembler::new(0, 0);
-        asm.assemble(&expanded, &sym_table).expect("should assemble");
+        let asm = Assembler::new(0, 0);
+        let program = asm.assemble(&expanded, &sym_table).expect("should assemble");
 
-        let words: Vec<u32> = asm.text_bin.chunks(4)
+        let words: Vec<u32> = program.text_bin.chunks(4)
             .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
             .collect();
 
@@ -754,10 +756,10 @@ mod tests {
         let stmts = parser.parse().unwrap();
         let expanded = crate::pseudo::expand(stmts).unwrap();
         let sym_table = crate::symbols::SymbolTable::new(0, 0);
-        let mut asm = Assembler::new(0, 0);
-        asm.assemble(&expanded, &sym_table).expect("should assemble");
+        let asm = Assembler::new(0, 0);
+        let program = asm.assemble(&expanded, &sym_table).expect("should assemble");
 
-        let words: Vec<u32> = asm.text_bin.chunks(4)
+        let words: Vec<u32> = program.text_bin.chunks(4)
             .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
             .collect();
 
@@ -771,7 +773,7 @@ mod tests {
 
     #[test]
     fn test_invalid_directive_operands() {
-        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
         let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
@@ -792,7 +794,7 @@ mod tests {
 
     #[test]
     fn test_multiple_errors() {
-        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
         let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
@@ -838,14 +840,11 @@ mod tests {
         assert!(errors[1].message.contains("Unsupported instruction 'div'"));
         assert_eq!(errors[2].line, 4);
         assert!(errors[2].message.contains("Unsupported directive '.float'"));
-
-        // Verify that the valid instruction was assembled
-        assert_eq!(assembler.text_bin.len(), 4);
     }
 
     #[test]
     fn test_modifier_assembly() {
-        let mut assembler = Assembler::new(0, 0);
+        let assembler = Assembler::new(0, 0);
         let mut sym_table = SymbolTable::new(0, 0);
 
         // my_label at 0x12800 (bit 11 is 1)
@@ -879,25 +878,25 @@ mod tests {
             },
         ];
 
-        assembler.assemble(&statements, &sym_table).expect("Assembly should succeed");
+        let program = assembler.assemble(&statements, &sym_table).expect("Assembly should succeed");
 
         // LUI x1, %hi(0x12800) -> %hi = (0x12800 + 0x800) >> 12 = 0x13
         // Result: 0x000130B7
-        assert_eq!(u32::from_le_bytes(assembler.text_bin[0..4].try_into().unwrap()), 0x000130B7);
+        assert_eq!(u32::from_le_bytes(program.text_bin[0..4].try_into().unwrap()), 0x000130B7);
 
         // ADDI x1, x1, %lo(0x12800) -> %lo = 0x12800 & 0xFFF = 0x800 (signed -2048)
         // Result: 0x80008093
-        assert_eq!(u32::from_le_bytes(assembler.text_bin[4..8].try_into().unwrap()), 0x80008093);
+        assert_eq!(u32::from_le_bytes(program.text_bin[4..8].try_into().unwrap()), 0x80008093);
 
         // LW x2, %lo(0x12800)(x1) -> %lo = 0x800
         // I-type: imm[11:0]=0x800, rs1=1, funct3=010, rd=2, opcode=0000011
         // 0x80000000 | 0x8000 | 0x2000 | 0x100 | 0x03
-        assert_eq!(u32::from_le_bytes(assembler.text_bin[8..12].try_into().unwrap()), 0x8000A103);
+        assert_eq!(u32::from_le_bytes(program.text_bin[8..12].try_into().unwrap()), 0x8000A103);
     }
 
     #[test]
     fn test_assemble_i_type_instruction() {
-        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
         let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
@@ -910,9 +909,7 @@ mod tests {
             },
         ];
 
-        let result = assembler.assemble(&statements, &sym_table);
-        assert!(result.is_ok());
-        let instructions = assembler.text_bin;
+        let instructions = assembler.assemble(&statements, &sym_table).expect("should assemble").text_bin;
         assert_eq!(instructions.len(), 4);
         assert_eq!(
             instructions[0..4],
@@ -930,7 +927,7 @@ mod tests {
 
     #[test]
     fn test_assemble_i_type_instruction_with_negative_immediate() {
-        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
         let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
@@ -943,9 +940,7 @@ mod tests {
             },
         ];
 
-        let result = assembler.assemble(&statements, &sym_table);
-        assert!(result.is_ok());
-        let instructions = assembler.text_bin;
+        let instructions = assembler.assemble(&statements, &sym_table).expect("should assemble").text_bin;
         assert_eq!(instructions.len(), 4);
         assert_eq!(
             instructions[0..4],
@@ -963,7 +958,7 @@ mod tests {
 
     #[test]
     fn test_s_instruction_with_unknown_label() {
-        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
         let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
@@ -988,7 +983,7 @@ mod tests {
 
     #[test]
     fn test_encoding_of_i_shift_instruction() {
-        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
         let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
@@ -1001,9 +996,7 @@ mod tests {
             },
         ];
 
-        let result = assembler.assemble(&statements, &sym_table);
-        assert!(result.is_ok());
-        let instructions = assembler.text_bin;
+        let instructions = assembler.assemble(&statements, &sym_table).expect("should assemble").text_bin;
         assert_eq!(instructions.len(), 4);
         // srai x10, x11, 4
         // opcode=0x13, rd=10, funct3=0x5, rs1=11, shamt=4, funct7=0x20
@@ -1020,7 +1013,7 @@ mod tests {
 
     #[test]
     fn test_encoding_of_b_type_instruction() {
-        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
         let mut sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         sym_table.add_label("target".to_string(), config::TEXT_BASE + 0x10).unwrap();
         let statements = vec![
@@ -1034,9 +1027,7 @@ mod tests {
             },
         ];
 
-        let result = assembler.assemble(&statements, &sym_table);
-        assert!(result.is_ok());
-        let instructions = assembler.text_bin;
+        let instructions = assembler.assemble(&statements, &sym_table).expect("should assemble").text_bin;
         assert_eq!(instructions.len(), 4);
         // beq x1, x2, target (offset = target - current_pc = 0x0040_0010 - 0x0040_0000 = 16)
         // opcode=0x63, funct3=0x0, rs1=1, rs2=2, imm=16
@@ -1053,7 +1044,7 @@ mod tests {
 
     #[test]
     fn test_encoding_of_u_type_instruction() {
-        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
         let sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let statements = vec![
             Statement {
@@ -1065,9 +1056,7 @@ mod tests {
             },
         ];
 
-        let result = assembler.assemble(&statements, &sym_table);
-        assert!(result.is_ok());
-        let instructions = assembler.text_bin;
+        let instructions = assembler.assemble(&statements, &sym_table).expect("should assemble").text_bin;
         assert_eq!(instructions.len(), 4);
         // lui x5, 0x12345
         // opcode=0x37, rd=5, imm=0xF1
@@ -1084,7 +1073,7 @@ mod tests {
 
     #[test]
     fn test_extended_directives() {
-        let mut assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let assembler = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
         let mut sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         let source = r#"
             .data
@@ -1100,14 +1089,14 @@ mod tests {
         let statements = parser.parse().unwrap();
         sym_table.build(&statements).unwrap();
 
-        assembler.assemble(&statements, &sym_table).expect("Assembly should succeed");
+        let program = assembler.assemble(&statements, &sym_table).expect("Assembly should succeed");
 
-        assert_eq!(assembler.data_bin.len(), 24);
-        assert_eq!(assembler.data_bin[0..3], [1, 2, 3]);
-        assert_eq!(assembler.data_bin[3..7], [0x34, 0x12, 0x78, 0x56]);
-        assert_eq!(assembler.data_bin[7..11], [0xEF, 0xBE, 0xAD, 0xDE]);
-        assert_eq!(assembler.data_bin[11..18], *b"RISC-V\0");
-        assert_eq!(assembler.data_bin[18..20], [0, 0]);
-        assert_eq!(assembler.data_bin[20..24], [42, 0, 0, 0]);
+        assert_eq!(program.data_bin.len(), 24);
+        assert_eq!(program.data_bin[0..3], [1, 2, 3]);
+        assert_eq!(program.data_bin[3..7], [0x34, 0x12, 0x78, 0x56]);
+        assert_eq!(program.data_bin[7..11], [0xEF, 0xBE, 0xAD, 0xDE]);
+        assert_eq!(program.data_bin[11..18], *b"RISC-V\0");
+        assert_eq!(program.data_bin[18..20], [0, 0]);
+        assert_eq!(program.data_bin[20..24], [42, 0, 0, 0]);
     }
 }

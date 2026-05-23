@@ -150,22 +150,25 @@ fn compile_and_load(app: &mut App) -> Result<(), String> {
     let mut symbol_table = symbols::SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
     symbol_table.build(&statements).map_err(|e| format!("Symbol error: {}", e))?;
 
-    let mut assembler = assembler::Assembler::new(config::TEXT_BASE, config::DATA_BASE);
-    if let Err(errors) = assembler.assemble(&statements, &symbol_table) {
-        let first_line = errors.first().map(|e| e.line).unwrap_or(0);
-        let mut msg = String::new();
-        for err in &errors {
-            msg.push_str(&format!("Line {}: {}\n", err.line, err.message));
+    let assembler = assembler::Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+    let program = match assembler.assemble(&statements, &symbol_table) {
+        Ok(program) => program,
+        Err(errors) => {
+            let first_line = errors.first().map(|e| e.line).unwrap_or(0);
+            let mut msg = String::new();
+            for err in &errors {
+                msg.push_str(&format!("Line {}: {}\n", err.line, err.message));
+            }
+            jump_to_error_line(app, first_line);
+            return Err(msg);
         }
-        jump_to_error_line(app, first_line);
-        return Err(msg);
-    }
+    };
 
     app.error_line = None;
     app.processor = Processor::new(config::TEXT_BASE, config::DATA_BASE, config::STACK_BASE, config::STACK_SIZE);
-    app.processor.load(&assembler.text_bin, &assembler.data_bin);
+    app.processor.load(&program.text_bin, &program.data_bin);
     app.prev_registers = *app.processor.registers();
-    app.debug_info = Some(assembler.debug_info);
+    app.debug_info = Some(program.debug_info);
     app.logs.push("Assembly successful! CPU reset and loaded.".to_string());
     app.logs_scroll = u16::MAX;
     app.memory_scroll = config::TEXT_BASE;
