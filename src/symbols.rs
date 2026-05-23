@@ -114,9 +114,19 @@ impl SymbolTable {
                     Err("Directive .space requires an immediate value".into())
                 }
             }
+            DirectiveKind::Balign => {
+                if let Some(Operand::Immediate(n)) = operands.get(0) {
+                    if *n < 1 { return Ok(0); }
+                    let alignment = *n as u32;
+                    let aligned_pc = (current_pc + alignment - 1) & !(alignment - 1);
+                    Ok(aligned_pc - current_pc)
+                } else {
+                    Err("Directive .balign requires a byte-count parameter".into())
+                }
+            }
             DirectiveKind::Unknown(name) => Err(format!("Unknown directive '{}'", name)),
-            // Section switches are handled before calculate_directive_size is called.
-            DirectiveKind::Text | DirectiveKind::Data => Ok(0),
+            // Section switches and no-ops are handled before calculate_directive_size is called.
+            DirectiveKind::Text | DirectiveKind::Data | DirectiveKind::Globl => Ok(0),
         }
     }
 

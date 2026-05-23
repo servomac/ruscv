@@ -80,6 +80,7 @@ impl Assembler {
                     match kind {
                         DirectiveKind::Text => { current_section = Section::Text; continue; }
                         DirectiveKind::Data => { current_section = Section::Data; continue; }
+                        DirectiveKind::Globl => { continue; }
                         DirectiveKind::Align => {
                             if let Some(Operand::Immediate(pow)) = ops.get(0) {
                                 let alignment = 2u32.pow(*pow as u32);
@@ -94,6 +95,27 @@ impl Assembler {
                                 }
                             } else {
                                 errors.push(AssemblerError::new(stmt.line, "Directive .align requires an immediate value".to_string()));
+                            }
+                            continue;
+                        }
+                        DirectiveKind::Balign => {
+                            if let Some(Operand::Immediate(n)) = ops.get(0) {
+                                if *n < 1 {
+                                    errors.push(AssemblerError::new(stmt.line, format!(".balign requires a positive byte count, got {}", n)));
+                                } else {
+                                    let alignment = *n as u32;
+                                    let padding = (alignment - (addr % alignment)) % alignment;
+                                    let padding_bytes = vec![0u8; padding as usize];
+                                    if current_section == Section::Text {
+                                        text_bin.extend_from_slice(&padding_bytes);
+                                        current_pc += padding;
+                                    } else {
+                                        data_bin.extend_from_slice(&padding_bytes);
+                                        data_pc += padding;
+                                    }
+                                }
+                            } else {
+                                errors.push(AssemblerError::new(stmt.line, "Directive .balign requires an immediate value".to_string()));
                             }
                             continue;
                         }
@@ -529,8 +551,9 @@ fn emit_data_bytes(kind: &DirectiveKind, ops: &[Operand]) -> Result<Vec<u8>, Str
             }
         }
         DirectiveKind::Unknown(name) => return Err(format!("Unsupported directive '{}'", name)),
-        // Section switches and .align are handled before emit_data_bytes is called.
-        DirectiveKind::Text | DirectiveKind::Data | DirectiveKind::Align => unreachable!(),
+        // Section switches, alignment, and no-ops are handled before emit_data_bytes is called.
+        DirectiveKind::Text | DirectiveKind::Data | DirectiveKind::Align
+        | DirectiveKind::Balign | DirectiveKind::Globl => unreachable!(),
     }
     Ok(bytes)
 }
@@ -1140,5 +1163,63 @@ mod tests {
         let errors = result.unwrap_err();
         assert_eq!(errors.len(), 1);
         assert!(errors[0].message.contains(".half value") && errors[0].message.contains("out of range"));
+    }
+
+    #[test]
+    fn test_balign_inserts_correct_padding() {
+        let source = ".data\n.byte 1\n.balign 4\n.word 42";
+        let tokens = crate::lexer::tokenize(source).unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let mut sym_table = crate::symbols::SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
+        sym_table.build(&stmts).unwrap();
+        let asm = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let program = asm.assemble(&stmts, &sym_table).expect("should assemble");
+
+        // 1 byte + 3 padding + 4 bytes word = 8 bytes total
+        assert_eq!(program.data_bin.len(), 8);
+        assert_eq!(program.data_bin[0], 1);
+        assert_eq!(program.data_bin[1..4], [0, 0, 0]); // padding
+        assert_eq!(program.data_bin[4..8], [42, 0, 0, 0]); // .word 42
+    }
+
+    #[test]
+    fn test_balign_already_aligned_emits_no_padding() {
+        let source = ".data\n.word 1\n.balign 4\n.word 2";
+        let tokens = crate::lexer::tokenize(source).unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let mut sym_table = crate::symbols::SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
+        sym_table.build(&stmts).unwrap();
+        let asm = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let program = asm.assemble(&stmts, &sym_table).expect("should assemble");
+
+        assert_eq!(program.data_bin.len(), 8); // two words, no padding
+    }
+
+    #[test]
+    fn test_globl_is_accepted_as_noop() {
+        let source = ".globl main\nmain:\n  addi x1, x0, 1";
+        let tokens = crate::lexer::tokenize(source).unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let mut sym_table = crate::symbols::SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
+        sym_table.build(&stmts).unwrap();
+        let asm = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        let program = asm.assemble(&stmts, &sym_table).expect(".globl should not cause an error");
+        assert_eq!(program.text_bin.len(), 4); // only the addi
+    }
+
+    #[test]
+    fn test_global_alias_accepted() {
+        // .global is a common GAS alias for .globl
+        let source = ".global _start\n_start:\n  addi x0, x0, 0";
+        let tokens = crate::lexer::tokenize(source).unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let mut sym_table = crate::symbols::SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
+        sym_table.build(&stmts).unwrap();
+        let asm = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
+        assert!(asm.assemble(&stmts, &sym_table).is_ok());
     }
 }

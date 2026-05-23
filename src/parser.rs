@@ -14,6 +14,8 @@ pub enum DirectiveKind {
     Text,
     Data,
     Align,
+    Balign,
+    Globl,   // no-op; marks a label as globally visible (no ELF output)
     Byte,
     Half,
     Word,
@@ -29,6 +31,8 @@ impl fmt::Display for DirectiveKind {
             DirectiveKind::Text    => write!(f, ".text"),
             DirectiveKind::Data    => write!(f, ".data"),
             DirectiveKind::Align   => write!(f, ".align"),
+            DirectiveKind::Balign  => write!(f, ".balign"),
+            DirectiveKind::Globl   => write!(f, ".globl"),
             DirectiveKind::Byte    => write!(f, ".byte"),
             DirectiveKind::Half    => write!(f, ".half"),
             DirectiveKind::Word    => write!(f, ".word"),
@@ -43,16 +47,18 @@ impl fmt::Display for DirectiveKind {
 impl From<&str> for DirectiveKind {
     fn from(s: &str) -> Self {
         match s {
-            ".text"                      => DirectiveKind::Text,
-            ".data"                      => DirectiveKind::Data,
-            ".align"                     => DirectiveKind::Align,
-            ".byte"                      => DirectiveKind::Byte,
-            ".half"                      => DirectiveKind::Half,
-            ".word"                      => DirectiveKind::Word,
-            ".ascii"                     => DirectiveKind::Ascii,
+            ".text"                          => DirectiveKind::Text,
+            ".data"                          => DirectiveKind::Data,
+            ".align"                         => DirectiveKind::Align,
+            ".balign"                        => DirectiveKind::Balign,
+            ".globl" | ".global"             => DirectiveKind::Globl,
+            ".byte"                          => DirectiveKind::Byte,
+            ".half"                          => DirectiveKind::Half,
+            ".word"                          => DirectiveKind::Word,
+            ".ascii"                         => DirectiveKind::Ascii,
             ".asciz" | ".asciiz" | ".string" => DirectiveKind::Asciz,
-            ".space"                     => DirectiveKind::Space,
-            _                            => DirectiveKind::Unknown(s.to_string()),
+            ".space" | ".skip" | ".zero"     => DirectiveKind::Space,
+            _                                => DirectiveKind::Unknown(s.to_string()),
         }
     }
 }
