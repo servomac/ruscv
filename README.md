@@ -36,7 +36,8 @@ A RISC-V Assembler and Emulator implementation in Rust.
 
 ## Project Structure
 
-- `src/tui.rs`: The interactive Terminal User Interface.
+- `src/tui.rs`: The interactive Terminal User Interface — UI state, key bindings, and rendering only.
+- `src/session.rs`: Emulator session — owns the processor, debug info, register snapshots, and drives the assembler pipeline. Shared logic between the TUI and future headless use cases.
 - `src/processor.rs`: The heart of the emulator, handling instruction fetch, decode, and execution.
 - `src/elf_loader.rs`: ELF32 parser — maps PT_LOAD segments and resolves the `tohost` symbol.
 - `src/runner.rs`: Headless ELF runner — steps the processor and detects pass/fail via `tohost`.
