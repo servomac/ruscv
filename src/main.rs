@@ -8,6 +8,7 @@ mod processor;
 mod pseudo;
 mod bus;
 mod runner;
+mod session;
 mod tui;
 
 fn main() -> Result<(), std::io::Error> {

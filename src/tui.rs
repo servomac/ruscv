@@ -1,10 +1,6 @@
-use crate::processor::Processor;
 use crate::config;
-use crate::lexer;
-use crate::parser;
-use crate::pseudo;
-use crate::symbols;
-use crate::assembler;
+use crate::processor::StepError;
+use crate::session::{CompileError, Session};
 
 use ratatui::crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
@@ -38,7 +34,7 @@ pub enum RunMode {
 }
 
 pub struct App<'a> {
-    pub processor: Processor,
+    pub session: Session,
     pub editor: TextArea<'a>,
     pub active_pane: Pane,
     pub number_format: NumFormat,
@@ -48,8 +44,6 @@ pub struct App<'a> {
     pub logs: Vec<String>,
     pub logs_scroll: u16,
     pub should_quit: bool,
-    pub debug_info: Option<assembler::DebugInfo>,
-    pub prev_registers: [u32; config::NUM_REGISTERS],
     pub error_line: Option<usize>,
     pub memory_pane_height: u16,
 }
@@ -57,7 +51,7 @@ pub struct App<'a> {
 impl<'a> App<'a> {
     pub fn new(initial_file: Option<String>) -> App<'a> {
         let mut logs = Vec::new();
-        let mut editor = if let Some(path) = initial_file {
+        let editor = if let Some(path) = initial_file {
             match std::fs::read_to_string(&path) {
                 Ok(content) => {
                     let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
@@ -73,17 +67,8 @@ impl<'a> App<'a> {
             TextArea::default()
         };
 
-        editor.set_block(
-            ratatui::widgets::Block::default()
-                .borders(ratatui::widgets::Borders::ALL)
-                .title("Code Editor"),
-        );
-
-        let processor = Processor::new(config::TEXT_BASE, config::DATA_BASE, config::STACK_BASE, config::STACK_SIZE);
-        let prev_registers = *processor.registers();
-
         App {
-            processor,
+            session: Session::new(),
             editor,
             active_pane: Pane::Editor,
             number_format: NumFormat::Hex,
@@ -93,8 +78,6 @@ impl<'a> App<'a> {
             logs,
             logs_scroll: u16::MAX,
             should_quit: false,
-            debug_info: None,
-            prev_registers,
             error_line: None,
             memory_pane_height: 20,
         }
@@ -102,18 +85,15 @@ impl<'a> App<'a> {
 }
 
 pub fn run(initial_file: Option<String>) -> Result<(), io::Error> {
-    // setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // create app and run it
     let app = App::new(initial_file);
     let res = run_app(&mut terminal, app);
 
-    // restore terminal
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
@@ -127,52 +107,34 @@ pub fn run(initial_file: Option<String>) -> Result<(), io::Error> {
 
 fn compile_and_load(app: &mut App) -> Result<(), String> {
     let source = app.editor.lines().join("\n");
-
-    let tokens = match lexer::tokenize(&source) {
-        Ok(tokens) => tokens,
-        Err(e) => {
-            jump_to_error_line(app, e.line);
-            return Err(format!("Line {}: {}", e.line, e));
+    match app.session.load_source(&source) {
+        Ok(()) => {
+            app.error_line = None;
+            app.memory_scroll = config::TEXT_BASE;
+            app.logs.push("Assembly successful! CPU reset and loaded.".to_string());
+            app.logs_scroll = u16::MAX;
+            Ok(())
         }
-    };
-
-    let mut parser = parser::Parser::new(tokens);
-    let statements = match parser.parse() {
-        Ok(stmt) => stmt,
-        Err(e) => {
+        Err(CompileError::Lex(e)) => {
             jump_to_error_line(app, e.line);
-            return Err(format!("Line {}: {}", e.line, e));
+            Err(format!("Line {}: {}", e.line, e))
         }
-    };
-
-    let statements = pseudo::expand(statements).map_err(|e| format!("Pseudo-instruction error: {}", e))?;
-
-    let mut symbol_table = symbols::SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
-    symbol_table.build(&statements).map_err(|e| format!("Symbol error: {}", e))?;
-
-    let assembler = assembler::Assembler::new(config::TEXT_BASE, config::DATA_BASE);
-    let program = match assembler.assemble(&statements, &symbol_table) {
-        Ok(program) => program,
-        Err(errors) => {
+        Err(CompileError::Parse(e)) => {
+            jump_to_error_line(app, e.line);
+            Err(format!("Line {}: {}", e.line, e))
+        }
+        Err(CompileError::Pseudo(msg)) => Err(format!("Pseudo-instruction error: {}", msg)),
+        Err(CompileError::Symbol(msg)) => Err(format!("Symbol error: {}", msg)),
+        Err(CompileError::Assemble(errors)) => {
             let first_line = errors.first().map(|e| e.line).unwrap_or(0);
             let mut msg = String::new();
             for err in &errors {
                 msg.push_str(&format!("Line {}: {}\n", err.line, err.message));
             }
             jump_to_error_line(app, first_line);
-            return Err(msg);
+            Err(msg)
         }
-    };
-
-    app.error_line = None;
-    app.processor = Processor::new(config::TEXT_BASE, config::DATA_BASE, config::STACK_BASE, config::STACK_SIZE);
-    app.processor.load(&program.text_bin, &program.data_bin);
-    app.prev_registers = *app.processor.registers();
-    app.debug_info = Some(program.debug_info);
-    app.logs.push("Assembly successful! CPU reset and loaded.".to_string());
-    app.logs_scroll = u16::MAX;
-    app.memory_scroll = config::TEXT_BASE;
-    Ok(())
+    }
 }
 
 fn run_app<B: ratatui::backend::Backend>(
@@ -206,7 +168,6 @@ where
                 }
 
                 if key.code == KeyCode::F(2) {
-                    // Just Load
                     if app.mode == RunMode::Editing {
                         if let Err(e) = compile_and_load(&mut app) {
                             app.logs.push(format!("Compile Error:\n{}", e));
@@ -225,7 +186,7 @@ where
                     continue;
                 }
 
-                if key.code == KeyCode::F(5) { // Run
+                if key.code == KeyCode::F(5) {
                     if app.mode == RunMode::Editing {
                         if let Err(e) = compile_and_load(&mut app) {
                             app.logs.push(format!("Compile Error:\n{}", e));
@@ -233,25 +194,17 @@ where
                             continue;
                         }
                     }
-                    app.prev_registers = *app.processor.registers();
                     app.mode = RunMode::Running;
-                    loop {
-                        match app.processor.step() {
-                            Ok(_) => {}
-                            Err(e) => {
-                                app.logs.push(format!("Halted: {}", format_step_error(&e)));
-                                app.logs_scroll = u16::MAX;
-                                app.mode = RunMode::Editing;
-                                break;
-                            }
-                        }
-                    }
+                    let halt = app.session.run_to_halt();
+                    app.logs.push(format!("Halted: {}", format_step_error(&halt)));
+                    app.logs_scroll = u16::MAX;
+                    app.mode = RunMode::Editing;
                     move_cursor_to_pc(&mut app);
                     maybe_follow_pc_in_memory(&mut app);
                     continue;
                 }
 
-                if key.code == KeyCode::F(10) { // Step
+                if key.code == KeyCode::F(10) {
                     if app.mode == RunMode::Editing {
                         if let Err(e) = compile_and_load(&mut app) {
                             app.logs.push(format!("Compile Error:\n{}", e));
@@ -260,8 +213,7 @@ where
                         }
                         app.mode = RunMode::Stepping;
                     }
-                    app.prev_registers = *app.processor.registers();
-                    match app.processor.step() {
+                    match app.session.step() {
                         Ok(_) => {
                             move_cursor_to_pc(&mut app);
                             maybe_follow_pc_in_memory(&mut app);
@@ -295,7 +247,7 @@ where
                             KeyCode::Char('t') | KeyCode::Char('T') => app.memory_scroll = config::TEXT_BASE,
                             KeyCode::Char('d') | KeyCode::Char('D') => app.memory_scroll = config::DATA_BASE,
                             KeyCode::Char('s') | KeyCode::Char('S') => app.memory_scroll = config::STACK_BASE.saturating_sub(64),
-                            KeyCode::Char('c') | KeyCode::Char('C') => app.memory_scroll = app.processor.pc(),
+                            KeyCode::Char('c') | KeyCode::Char('C') => app.memory_scroll = app.session.processor.pc(),
                             _ => {}
                         }
                     }
@@ -313,7 +265,7 @@ where
 }
 
 fn maybe_follow_pc_in_memory(app: &mut App) {
-    let pc = app.processor.pc();
+    let pc = app.session.processor.pc();
     let visible_bytes = (app.memory_pane_height as u32) * 4;
     let in_view = pc >= app.memory_scroll
         && pc < app.memory_scroll.saturating_add(visible_bytes);
@@ -330,8 +282,8 @@ fn jump_to_error_line(app: &mut App, line: usize) {
 }
 
 fn move_cursor_to_pc(app: &mut App) {
-    if let Some(ref debug_info) = app.debug_info {
-        if let Some(mapping) = debug_info.address_to_source.get(&app.processor.pc()) {
+    if let Some(ref debug_info) = app.session.debug_info {
+        if let Some(mapping) = debug_info.address_to_source.get(&app.session.processor.pc()) {
             if mapping.line > 0 {
                 app.editor.move_cursor(CursorMove::Jump((mapping.line - 1) as u16, 0));
             }
@@ -339,8 +291,7 @@ fn move_cursor_to_pc(app: &mut App) {
     }
 }
 
-fn format_step_error(e: &crate::processor::StepError) -> String {
-    use crate::processor::StepError;
+fn format_step_error(e: &StepError) -> String {
     match e {
         StepError::Ebreak => "ebreak".to_string(),
         StepError::IllegalInstruction => "illegal instruction".to_string(),
@@ -369,13 +320,12 @@ mod ui {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-            Constraint::Length(3),  // Top bar
-            Constraint::Min(10),    // Middle section
-            Constraint::Length(10), // Bottom logs
+            Constraint::Length(3),
+            Constraint::Min(10),
+            Constraint::Length(10),
             ])
             .split(f.area());
 
-        // Top bar — styled spans
         let dim   = Style::default().fg(Color::DarkGray);
         let key   = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
         let val   = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
@@ -397,7 +347,7 @@ mod ui {
         };
         let top_line = Line::from(vec![
             Span::styled(" PC ", dim),
-            Span::styled(format!("0x{:08x}", app.processor.pc()), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("0x{:08x}", app.session.processor.pc()), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
             sep.clone(),
             Span::styled(mode_label, Style::default().fg(mode_color).add_modifier(Modifier::BOLD)),
             sep.clone(),
@@ -414,17 +364,15 @@ mod ui {
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(top_bar, chunks[0]);
 
-        // Middle section
         let middle_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Percentage(60), // Editor
-                Constraint::Percentage(20), // Registers
-                Constraint::Percentage(20), // Memory
+                Constraint::Percentage(60),
+                Constraint::Percentage(20),
+                Constraint::Percentage(20),
             ])
             .split(chunks[1]);
 
-        // Editor
         let editor_style = if app.active_pane == Pane::Editor { Style::default().fg(Color::Yellow) } else { Style::default() };
         app.editor.set_block(
             Block::default()
@@ -441,8 +389,7 @@ mod ui {
         }
         f.render_widget(&app.editor, middle_chunks[0]);
 
-        // Registers
-        let regs = app.processor.registers();
+        let regs = app.session.processor.registers();
         let stepping = app.mode != RunMode::Editing;
         let mut reg_lines: Vec<Line> = Vec::new();
         for i in 0..32 {
@@ -453,7 +400,7 @@ mod ui {
             };
             let label = format!("{:>3} {:4}", format!("x{}", i), ABI_NAMES[i]);
             let text = format!("{}  {}", label, value_str);
-            let changed = stepping && regs[i] != app.prev_registers[i];
+            let changed = stepping && regs[i] != app.session.prev_registers[i];
             let style = if changed {
                 Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
             } else {
@@ -472,17 +419,15 @@ mod ui {
         );
         f.render_widget(regs_p, middle_chunks[1]);
 
-        // Memory
         let mem_start = app.memory_scroll;
         let mem_size_words = middle_chunks[2].height.saturating_sub(2) as u32;
         app.memory_pane_height = mem_size_words as u16;
 
-        // We use a Vec of Lines so we can color individual addresses, such as the active PC
         let mut mem_lines: Vec<Line> = Vec::new();
 
         for i in 0..mem_size_words {
             let addr = mem_start + (i * 4);
-            match app.processor.read_memory_word(addr) {
+            match app.session.processor.read_memory_word(addr) {
                 Ok(word) => {
                     let formatted = match app.number_format {
                         NumFormat::Hex => format!("0x{:08x}: 0x{:08x}", addr, word),
@@ -490,8 +435,7 @@ mod ui {
                         NumFormat::Decimal => format!("0x{:08x}: {:<11}", addr, word),
                     };
 
-                    // If this address is the current Program Counter, highlight it in Green
-                    if addr == app.processor.pc() {
+                    if addr == app.session.processor.pc() {
                         mem_lines.push(Line::from(vec![Span::styled(
                             formatted,
                             Style::default().bg(Color::DarkGray).fg(Color::Green),
@@ -532,7 +476,6 @@ mod ui {
         );
         f.render_widget(mem_p, middle_chunks[2]);
 
-        // Logs — compute scroll with auto-scroll-to-bottom when logs_scroll == u16::MAX
         let logs_text = app.logs.join("\n");
         let total_log_lines: u16 = app.logs.iter()
             .map(|l| l.lines().count().max(1))
@@ -567,7 +510,7 @@ mod tests {
     #[test]
     fn test_app_load_non_existent_file() {
         let app = App::new(Some("non_existent_file.asm".to_string()));
-        assert_eq!(app.editor.lines().len(), 1); // Default empty line
+        assert_eq!(app.editor.lines().len(), 1);
         assert!(app.logs[0].contains("Error loading file"));
     }
 }
