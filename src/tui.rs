@@ -380,7 +380,7 @@ mod ui {
             NumFormat::Binary  => "Bin",
             NumFormat::Decimal => "Dec",
         };
-        let top_line = Line::from(vec![
+        let mut top_spans = vec![
             Span::styled(" PC ", dim),
             Span::styled(format!("0x{:08x}", app.session.processor.pc()), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
             sep.clone(),
@@ -391,11 +391,27 @@ mod ui {
             Span::styled("F2", key), Span::styled(" Load  ", dim),
             Span::styled("F5", key), Span::styled(" Run  ", dim),
             Span::styled("F10", key), Span::styled(" Step  ", dim),
-            Span::styled("F9", key), Span::styled(" Number format  ", dim),
+            Span::styled("F9", key), Span::styled(" Format  ", dim),
             Span::styled("Tab", key), Span::styled(" Switch pane  ", dim),
             Span::styled("Esc", key), Span::styled(" Quit", dim),
-        ]);
-        let top_bar = Paragraph::new(top_line)
+        ];
+        match app.active_pane {
+            Pane::Registers | Pane::Logs => {
+                top_spans.extend([sep.clone(), Span::styled("↑↓", key), Span::styled(" Scroll", dim)]);
+            }
+            Pane::Memory => {
+                top_spans.extend([
+                    sep.clone(),
+                    Span::styled("↑↓", key), Span::styled(" Scroll  ", dim),
+                    Span::styled("T", key), Span::styled(" .text  ", dim),
+                    Span::styled("D", key), Span::styled(" .data  ", dim),
+                    Span::styled("S", key), Span::styled(" .stack  ", dim),
+                    Span::styled("C", key), Span::styled(" →PC", dim),
+                ]);
+            }
+            Pane::Editor => {}
+        }
+        let top_bar = Paragraph::new(Line::from(top_spans))
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(top_bar, chunks[0]);
 
@@ -523,7 +539,7 @@ mod ui {
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(logs_style)
-                .title("Execution Logs (↑↓ to scroll)"),
+                .title("Execution Logs"),
         );
         f.render_widget(logs, chunks[2]);
     }
