@@ -1,9 +1,6 @@
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum MemoryFault {
     OutOfBounds { address: u32 },
-    WriteToReadOnly { address: u32 },
-    UnalignedAccess { address: u32 },
-    ExecuteFromNonExecutable { address: u32 },
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -122,39 +119,8 @@ impl Device for Ram {
     }
 }
 
-// ROM Device Implementation
-pub struct Rom {
-    pub data: Vec<u8>,
-}
-
-impl Rom {
-    pub fn new(data: Vec<u8>) -> Self {
-        Self { data }
-    }
-}
-
-impl Device for Rom {
-    fn read(&self, addr: u32, size: AccessSize) -> Result<u32, MemoryFault> {
-        read_bytes(&self.data, addr, size)
-    }
-
-    fn write(&mut self, addr: u32, _val: u32, _size: AccessSize) -> Result<(), MemoryFault> {
-        Err(MemoryFault::WriteToReadOnly { address: addr })
-    }
-}
-
 // Placeholder for MMIO devices
-pub struct MmioDevice {
-    name: String,
-}
-
-impl MmioDevice {
-    pub fn new(name: &str) -> Self {
-        Self {
-            name: name.to_string(),
-        }
-    }
-}
+pub struct MmioDevice;
 
 impl Device for MmioDevice {
     fn read(&self, _addr: u32, _size: AccessSize) -> Result<u32, MemoryFault> {

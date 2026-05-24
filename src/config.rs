@@ -9,18 +9,11 @@ pub const TEXT_BASE: u32 = DRAM_BASE;
 // Data after 1MB of text space
 pub const DATA_BASE: u32 = DRAM_BASE + 0x0010_0000;
 
-// Stack top near the top of a "safe" 32-bit user space region
-// 0x7FFF_FFF0 — aligned to 16 bytes, per RISC-V ABI requirement
-pub const STACK_BASE: u32 = 0x7FFF_FFF0;
-pub const STACK_SIZE: usize = 1024 * 1024 * 8; // 8MB
-
-// Default size for memory segments if not specified
-pub const DEFAULT_SEGMENT_SIZE: u32 = 0x0010_0000;
+// Flat DRAM region: text, data, heap and stack all live here.
+// Stack pointer initialises to DRAM_BASE + DRAM_SIZE and grows downward.
+pub const DRAM_SIZE: u32 = 0x0400_0000; // 64 MB
 
 // QEMU Virt Memory Map
-pub const ROM_BASE: u32 = 0x0000_1000;
-pub const ROM_SIZE: u32 = 0x0000_1000;
-
 pub const CLINT_BASE: u32 = 0x0200_0000;
 pub const CLINT_SIZE: u32 = 0x0001_0000;
 

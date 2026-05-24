@@ -281,7 +281,7 @@ where
                             KeyCode::Down => app.memory_scroll = app.memory_scroll.wrapping_add(4),
                             KeyCode::Char('t') | KeyCode::Char('T') => app.memory_scroll = config::TEXT_BASE,
                             KeyCode::Char('d') | KeyCode::Char('D') => app.memory_scroll = config::DATA_BASE,
-                            KeyCode::Char('s') | KeyCode::Char('S') => app.memory_scroll = config::STACK_BASE.saturating_sub(64),
+                            KeyCode::Char('s') | KeyCode::Char('S') => app.memory_scroll = (config::DRAM_BASE + config::DRAM_SIZE).saturating_sub(64),
                             KeyCode::Char('c') | KeyCode::Char('C') => app.memory_scroll = app.session.processor.pc(),
                             _ => {}
                         }
@@ -491,15 +491,13 @@ mod ui {
             }
         }
 
-        let stack_start = config::STACK_BASE.saturating_sub(config::STACK_SIZE as u32);
-        let section = if mem_start >= config::DATA_BASE {
-            "data"
-        } else if mem_start >= config::TEXT_BASE {
-            "text"
-        } else if mem_start >= stack_start && mem_start < config::STACK_BASE {
-            "stack"
-        } else {
+        let dram_end = config::DRAM_BASE + config::DRAM_SIZE;
+        let section = if mem_start < config::DRAM_BASE || mem_start >= dram_end {
             "unmapped"
+        } else if mem_start >= config::DATA_BASE {
+            "data/stack"
+        } else {
+            "text"
         };
 
         let mem_style = if app.active_pane == Pane::Memory { Style::default().fg(Color::Yellow) } else { Style::default() };

@@ -20,12 +20,7 @@ pub struct Session {
 
 impl Session {
     pub fn new() -> Self {
-        let processor = Processor::new(
-            config::TEXT_BASE,
-            config::DATA_BASE,
-            config::STACK_BASE,
-            config::STACK_SIZE,
-        );
+        let processor = Processor::new();
         let prev_registers = *processor.registers();
         Self { processor, debug_info: None, prev_registers }
     }
@@ -41,12 +36,7 @@ impl Session {
             .assemble(&statements, &sym)
             .map_err(CompileError::Assemble)?;
 
-        self.processor = Processor::new(
-            config::TEXT_BASE,
-            config::DATA_BASE,
-            config::STACK_BASE,
-            config::STACK_SIZE,
-        );
+        self.processor = Processor::new();
         self.processor.load(&program.text_bin, &program.data_bin);
         self.prev_registers = *self.processor.registers();
         self.debug_info = Some(program.debug_info);

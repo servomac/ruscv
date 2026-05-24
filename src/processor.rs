@@ -1,5 +1,5 @@
 use std::sync::{Arc, Mutex};
-use crate::bus::{Bus, Ram, Rom, MmioDevice, Clint, ClintState, Uart, AccessSize, MemoryFault};
+use crate::bus::{Bus, Ram, MmioDevice, Clint, ClintState, Uart, AccessSize, MemoryFault};
 use crate::elf_loader::ElfImage;
 
 // CSR addresses as specified by the RISC-V M-mode privileged ISA.
@@ -72,17 +72,9 @@ pub struct Processor {
     pc: u32,
     registers: [u32; crate::config::NUM_REGISTERS],
     bus: Bus,
-    // Store bases for convenience/test compatibility
     text_base: u32,
-    data_base: u32,
-    stack_base: u32,
-    stack_size: usize,
-    // All M-mode CSR registers
     csrs: CsrFile,
-    // Shared with the Clint bus device so the processor can increment mtime and read
-    // mtimecmp without going through the bus on every step.
     clint_state: Arc<Mutex<ClintState>>,
-    // UART output buffer shared with the Uart bus device
     uart_output: Arc<Mutex<Vec<u8>>>,
 }
 
@@ -169,38 +161,28 @@ fn register_platform_devices(
     uart_output: Arc<Mutex<Vec<u8>>>,
 ) {
     bus.add_device(crate::config::CLINT_BASE, crate::config::CLINT_SIZE, Box::new(Clint::new(clint_state)));
-    bus.add_device(crate::config::PLIC_BASE, crate::config::PLIC_SIZE, Box::new(MmioDevice::new("PLIC")));
+    bus.add_device(crate::config::PLIC_BASE, crate::config::PLIC_SIZE, Box::new(MmioDevice));
     bus.add_device(crate::config::UART_BASE, crate::config::UART_SIZE, Box::new(Uart::new(uart_output)));
 }
 
 impl Processor {
-    pub fn new(text_base: u32, data_base: u32, stack_base: u32, stack_size: usize) -> Self {
+    pub fn new() -> Self {
         let mut registers = [0; crate::config::NUM_REGISTERS];
-        registers[2] = stack_base;
+        registers[2] = crate::config::DRAM_BASE + crate::config::DRAM_SIZE;
 
         let mut bus = Bus::new();
         let clint_state = Arc::new(Mutex::new(ClintState { mtime: 0, mtimecmp: u64::MAX }));
         let uart_output = Arc::new(Mutex::new(Vec::new()));
         register_platform_devices(&mut bus, Arc::clone(&clint_state), Arc::clone(&uart_output));
 
-        // Initial regions for backward compatibility with existing tests
-        // and current assembler/loader expectations.
-        // These will eventually be merged into a single DRAM device.
-        bus.add_device(text_base, crate::config::DEFAULT_SEGMENT_SIZE, Box::new(Rom::new(Vec::new()))); // Placeholder text
-        bus.add_device(data_base, crate::config::DEFAULT_SEGMENT_SIZE, Box::new(Ram::new(crate::config::DEFAULT_SEGMENT_SIZE as usize))); // Placeholder data
-
-        // Stack grows downward, but we map it from (stack_base - stack_size) to stack_base
-        let stack_start = stack_base.wrapping_sub(stack_size as u32);
-        bus.add_device(stack_start, stack_size as u32, Box::new(Ram::new(stack_size)));
+        bus.add_device(crate::config::DRAM_BASE, crate::config::DRAM_SIZE,
+            Box::new(Ram::new(crate::config::DRAM_SIZE as usize)));
 
         Processor {
-            pc: text_base,
+            pc: crate::config::TEXT_BASE,
             registers,
             bus,
-            text_base,
-            data_base,
-            stack_base,
-            stack_size,
+            text_base: crate::config::TEXT_BASE,
             csrs: CsrFile::new(),
             clint_state,
             uart_output,
@@ -208,58 +190,35 @@ impl Processor {
     }
 
     pub fn from_elf(image: &ElfImage) -> Self {
-        let stack_base = crate::config::STACK_BASE;
-        let stack_size = crate::config::STACK_SIZE;
-
         let mut registers = [0; crate::config::NUM_REGISTERS];
-        registers[2] = stack_base; // sp
+        registers[2] = crate::config::DRAM_BASE + crate::config::DRAM_SIZE;
 
         let mut bus = Bus::new();
         let clint_state = Arc::new(Mutex::new(ClintState { mtime: 0, mtimecmp: u64::MAX }));
         let uart_output = Arc::new(Mutex::new(Vec::new()));
         register_platform_devices(&mut bus, Arc::clone(&clint_state), Arc::clone(&uart_output));
 
-        // Map every ELF PT_LOAD segment at its VMA (runtime address).
-        // If paddr != vaddr (ROM→RAM layout), also map the file bytes at paddr
-        // so startup copy code (e.g. FreeRTOS start.S) can read from there.
-        let mut sorted_segs: Vec<_> = image.segments.iter().collect();
-        sorted_segs.sort_by_key(|s| s.vaddr);
-
-        for seg in &sorted_segs {
-            let mut ram = Ram::new(seg.data.len());
-            ram.data.copy_from_slice(&seg.data);
-            bus.add_device(seg.vaddr, seg.data.len() as u32, Box::new(ram));
-
+        // Write all PT_LOAD segments into a single flat DRAM region.
+        // Gaps between segments are naturally zero (calloc semantics).
+        // If paddr != vaddr (ROM→RAM layout), also write file bytes at paddr so
+        // startup copy code (e.g. FreeRTOS start.S) can read from there.
+        let mut dram = vec![0u8; crate::config::DRAM_SIZE as usize];
+        for seg in &image.segments {
+            let vma_off = (seg.vaddr - crate::config::DRAM_BASE) as usize;
+            dram[vma_off..vma_off + seg.data.len()].copy_from_slice(&seg.data);
             if seg.paddr != seg.vaddr && seg.filesz > 0 {
-                let mut lma_ram = Ram::new(seg.filesz);
-                lma_ram.data.copy_from_slice(&seg.data[..seg.filesz]);
-                bus.add_device(seg.paddr, seg.filesz as u32, Box::new(lma_ram));
+                let pma_off = (seg.paddr - crate::config::DRAM_BASE) as usize;
+                dram[pma_off..pma_off + seg.filesz].copy_from_slice(&seg.data[..seg.filesz]);
             }
         }
-
-        // Fill small gaps between consecutive segments with zeroed RAM. Linker
-        // alignment can leave a few unmapped bytes between sections that startup
-        // code still accesses (e.g. BSS clear loop starting before the BSS segment).
-        for pair in sorted_segs.windows(2) {
-            let gap_start = pair[0].vaddr + pair[0].data.len() as u32;
-            let gap_end   = pair[1].vaddr;
-            if gap_start < gap_end && (gap_end - gap_start) < 0x10000 {
-                let sz = (gap_end - gap_start) as usize;
-                bus.add_device(gap_start, sz as u32, Box::new(Ram::new(sz)));
-            }
-        }
-
-        let stack_start = stack_base.wrapping_sub(stack_size as u32);
-        bus.add_device(stack_start, stack_size as u32, Box::new(Ram::new(stack_size)));
+        bus.add_device(crate::config::DRAM_BASE, crate::config::DRAM_SIZE,
+            Box::new(Ram { data: dram }));
 
         Processor {
             pc: image.entry_point,
             registers,
             bus,
             text_base: image.entry_point,
-            data_base: 0,
-            stack_base,
-            stack_size,
             csrs: CsrFile::new(),
             clint_state,
             uart_output,
@@ -267,19 +226,14 @@ impl Processor {
     }
 
     pub fn load(&mut self, text: &[u8], data: &[u8]) {
-        self.bus.replace_device(self.text_base, text.len() as u32, Box::new(Rom::new(text.to_vec())));
-
-        let mut ram = Ram::new(data.len());
-        ram.data.copy_from_slice(data);
-        self.bus.replace_device(self.data_base, data.len() as u32, Box::new(ram));
-
+        let mut dram = vec![0u8; crate::config::DRAM_SIZE as usize];
+        let text_off = (crate::config::TEXT_BASE - crate::config::DRAM_BASE) as usize;
+        let data_off = (crate::config::DATA_BASE - crate::config::DRAM_BASE) as usize;
+        dram[text_off..text_off + text.len()].copy_from_slice(text);
+        dram[data_off..data_off + data.len()].copy_from_slice(data);
+        self.bus.replace_device(crate::config::DRAM_BASE, crate::config::DRAM_SIZE,
+            Box::new(Ram { data: dram }));
         self.pc = self.text_base;
-    }
-
-    pub fn reset(&mut self) {
-        self.pc = self.text_base;
-        self.registers = [0; crate::config::NUM_REGISTERS];
-        self.registers[2] = self.stack_base;
     }
 
     pub fn step(&mut self) -> Result<(), StepError> {
@@ -768,11 +722,6 @@ impl Processor {
         self.registers[index] = value;
     }
 
-    pub fn show_state(&self) {
-        println!("PC: {}", self.pc);
-        println!("Registers: {:?}", self.registers);
-    }
-
     pub fn pc(&self) -> u32 {
         self.pc
     }
@@ -783,22 +732,6 @@ impl Processor {
 
     pub fn read_memory_word(&self, address: u32) -> Result<u32, MemoryFault> {
         self.bus.read_word(address)
-    }
-
-    pub fn text_base(&self) -> u32 {
-        self.text_base
-    }
-
-    pub fn data_base(&self) -> u32 {
-        self.data_base
-    }
-
-    pub fn stack_base(&self) -> u32 {
-        self.stack_base
-    }
-
-    pub fn stack_size(&self) -> usize {
-        self.stack_size
     }
 
     /// Drain all bytes written to the UART since the last call.
@@ -813,7 +746,7 @@ mod tests {
 
     #[test]
     fn test_decode_add() {
-        let processor = Processor::new(0, 0, 0, 0);
+        let processor = Processor::new();
         // 0000000 (f7) | 00011 (rs2) | 00010 (rs1) | 000 (f3) | 00001 (rd) | 0110011 (op)
         let instruction = processor.decode(0x003100B3).unwrap();
         assert_eq!(instruction, Instruction::Add { rd: 1, rs1: 2, rs2: 3 });
@@ -821,7 +754,7 @@ mod tests {
 
     #[test]
     fn test_decode_addi() {
-        let processor = Processor::new(0, 0, 0, 0);
+        let processor = Processor::new();
         // addi x1, x2, -1
         // imm[11:0] = -1 (0xFFF) | rs1=2 | f3=0 | rd=1 | op=0010011
         let instruction = processor.decode(0xFFF10093).unwrap();
@@ -834,7 +767,7 @@ mod tests {
 
     #[test]
     fn test_decode_sw() {
-        let processor = Processor::new(0, 0, 0, 0);
+        let processor = Processor::new();
         // sw x3, -4(x2)
         // imm[11:5] = -1 (0xfe0 >> 5 = 0x7f) | rs2=3 | rs1=2 | f3=2 | imm[4:0] = -4 & 0x1f (0x1c) | op=0100011
         // inst = 0xFE312E23
@@ -844,7 +777,7 @@ mod tests {
 
     #[test]
     fn test_decode_beq() {
-        let processor = Processor::new(0, 0, 0, 0);
+        let processor = Processor::new();
         // beq x1, x2, -4
         // imm = -4 (0xfffffffc)
         // imm[12]=1, imm[11]=1, imm[10:5]=0x3f, imm[4:1]=0xe
@@ -856,7 +789,7 @@ mod tests {
 
     #[test]
     fn test_decode_lui() {
-        let processor = Processor::new(0, 0, 0, 0);
+        let processor = Processor::new();
         // lui x5, 0x12345
         // imm[31:12]=0x12345, rd=5, op=0110111
         let instruction = processor.decode(0x123452B7).unwrap();
@@ -865,7 +798,7 @@ mod tests {
 
     #[test]
     fn test_decode_jal() {
-        let processor = Processor::new(0, 0, 0, 0);
+        let processor = Processor::new();
         // jal x1, -4
         // imm = -4 (0xfffffffc)
         // imm[20]=1, imm[19:12]=0xff, imm[11]=1, imm[10:1]=0x3fe
@@ -878,7 +811,7 @@ mod tests {
 
     #[test]
     fn test_decode_jalr() {
-        let processor = Processor::new(0, 0, 0, 0);
+        let processor = Processor::new();
         // jalr x1, 4(x2)
         // imm=4 | rs1=2 | f3=0 | rd=1 | op=1100111
         let instruction = processor.decode(0x004100E7).unwrap();
@@ -887,7 +820,7 @@ mod tests {
 
     #[test]
     fn test_decode_shifts() {
-        let processor = Processor::new(0, 0, 0, 0);
+        let processor = Processor::new();
 
         // slli x1, x2, 5
         // imm[11:5]=0 | shamt=5 | rs1=2 | f3=1 | rd=1 | op=0010011
@@ -910,7 +843,7 @@ mod tests {
 
     #[test]
     fn test_decode_shift_max_shamt() {
-        let processor = Processor::new(0, 0, 0, 0);
+        let processor = Processor::new();
         // slli x1, x2, 31  — maximum meaningful shift for 32-bit registers
         // funct7=0000000 | shamt=11111 | rs1=00010 | funct3=001 | rd=00001 | op=0010011
         // 0x01F11093
@@ -920,7 +853,7 @@ mod tests {
 
     #[test]
     fn test_decode_shift_invalid_func7() {
-        let processor = Processor::new(0, 0, 0, 0);
+        let processor = Processor::new();
         // srli with funct7=0x10 (invalid — only 0x00 and 0x20 are valid for funct3=0x5)
         // funct7=0010000 | shamt=00100 | rs1=00010 | funct3=101 | rd=00001 | op=0010011
         // 0x20415093
@@ -930,7 +863,7 @@ mod tests {
 
     #[test]
     fn test_execute_add() {
-        let mut processor = Processor::new(0, 0, 0, 0);
+        let mut processor = Processor::new();
         processor.registers[1] = 10;
         processor.registers[2] = -20i32 as u32;
         let instruction = Instruction::Add { rd: 3, rs1: 1, rs2: 2 };
@@ -940,7 +873,7 @@ mod tests {
 
     #[test]
     fn test_execute_and() {
-        let mut processor = Processor::new(0, 0, 0, 0);
+        let mut processor = Processor::new();
         processor.registers[1] = 0b1100;
         processor.registers[2] = 0b1010;
         let instruction = Instruction::And { rd: 3, rs1: 1, rs2: 2 };
@@ -950,7 +883,7 @@ mod tests {
 
     #[test]
     fn test_execute_x0() {
-        let mut processor = Processor::new(0, 0, 0, 0);
+        let mut processor = Processor::new();
         processor.registers[1] = 10;
         processor.registers[2] = 20;
         // Instruction that tries to write to x0
@@ -961,18 +894,16 @@ mod tests {
 
     #[test]
     fn test_step_pc_increment() {
-        let mut processor = Processor::new(0x400000, 0, 0, 0);
+        let mut processor = Processor::new();
         // add x3, x1, x2 (0x002081B3)
         processor.load(&[0xB3, 0x81, 0x20, 0x00], &[]);
-        processor.pc = 0x400000;
-
         processor.step().unwrap();
-        assert_eq!(processor.pc, 0x400000 + 4);
+        assert_eq!(processor.pc, crate::config::TEXT_BASE + 4);
     }
 
     #[test]
     fn test_execute_slt_not_taken() {
-        let mut processor = Processor::new(0, 0, 0, 0);
+        let mut processor = Processor::new();
         // x1 = 2, x2 = 1 → x1 > x2 signed → rd = 0
         processor.registers[1] = 2;
         processor.registers[2] = 1;
@@ -982,7 +913,7 @@ mod tests {
 
     #[test]
     fn test_execute_slt_signed_vs_unsigned() {
-        let mut processor = Processor::new(0, 0, 0, 0);
+        let mut processor = Processor::new();
         // x1 = -1 (0xFFFFFFFF), x2 = 1
         // signed: -1 < 1 → rd = 1  (this is the key difference with sltu)
         processor.registers[1] = 0xFFFFFFFF;
@@ -993,7 +924,7 @@ mod tests {
 
     #[test]
     fn test_execute_slt_equal() {
-        let mut processor = Processor::new(0, 0, 0, 0);
+        let mut processor = Processor::new();
         // x1 == x2 → rd = 0 (strictly less than)
         processor.registers[1] = 5;
         processor.registers[2] = 5;
@@ -1003,7 +934,7 @@ mod tests {
 
     #[test]
     fn test_execute_sltu_signed_vs_unsigned() {
-        let mut processor = Processor::new(0, 0, 0, 0);
+        let mut processor = Processor::new();
         // x1 = 0xFFFFFFFF, x2 = 1
         // unsigned: 0xFFFFFFFF > 1 → rd = 0  (opposite of slt!)
         processor.registers[1] = 0xFFFFFFFF;
@@ -1014,7 +945,7 @@ mod tests {
 
     #[test]
     fn test_execute_sltu_positive() {
-        let mut processor = Processor::new(0, 0, 0, 0);
+        let mut processor = Processor::new();
         // x1 = 1, x2 = 0xFFFFFFFF
         // unsigned: 1 < 0xFFFFFFFF → rd = 1
         processor.registers[1] = 1;
@@ -1024,7 +955,7 @@ mod tests {
     }
 
     fn processor_with_data(data: Vec<u8>) -> Processor {
-        let mut p = Processor::new(0x0, 0x10000000, 0x7FFFFFFF, 1024);
+        let mut p = Processor::new();
         p.load(&[], &data);
         p
     }
@@ -1032,7 +963,7 @@ mod tests {
     #[test]
     fn test_lb_sign_extends_negative() {
         let mut p = processor_with_data(vec![0xFF]);
-        p.write_register(1, 0x10000000);  // rs1 = data_base
+        p.write_register(1, crate::config::DATA_BASE);
         p.execute(Instruction::Lb { rd: 2, rs1: 1, imm: 0 }).unwrap();
         // 0xFF as i8 = -1, sign extended to u32 = 0xFFFFFFFF
         assert_eq!(p.read_register(2), 0xFFFFFFFF);
@@ -1041,7 +972,7 @@ mod tests {
     #[test]
     fn test_lbu_zero_extends() {
         let mut p = processor_with_data(vec![0xFF]);
-        p.write_register(1, 0x10000000);
+        p.write_register(1, crate::config::DATA_BASE);
         p.execute(Instruction::Lbu { rd: 2, rs1: 1, imm: 0 }).unwrap();
         // 0xFF zero extended = 0x000000FF
         assert_eq!(p.read_register(2), 0x000000FF);
@@ -1051,7 +982,7 @@ mod tests {
     fn test_load_with_negative_offset() {
         let mut p = processor_with_data(vec![0x42, 0x00]);
         // point rs1 past the first byte, use imm=-1 to reach it
-        p.write_register(1, 0x10000001);
+        p.write_register(1, crate::config::DATA_BASE + 1);
         p.execute(Instruction::Lb { rd: 2, rs1: 1, imm: -1 }).unwrap();
         assert_eq!(p.read_register(2), 0x42);
     }
@@ -1067,7 +998,7 @@ mod tests {
     #[test]
     fn test_store_with_negative_offset() {
         let mut p = processor_with_data(vec![0x00]);
-        p.write_register(1, 0x10000001); // point rs1 one byte past data_base
+        p.write_register(1, crate::config::DATA_BASE + 1);
         p.write_register(2, 0x42);
         p.execute(Instruction::Sb { rs1: 1, rs2: 2, imm: -1 }).unwrap();
         // Read back through execute to stay at the public API and exercise the load path
@@ -1085,7 +1016,7 @@ mod tests {
 
     #[test]
     fn test_blt_signed_taken() {
-        let mut p = Processor::new(0, 0, 0, 0);
+        let mut p = Processor::new();
         p.write_register(1, 0xFFFFFFFF); // -1 signed
         p.write_register(2, 1);
         p.pc = 0;
@@ -1095,7 +1026,7 @@ mod tests {
 
     #[test]
     fn test_bltu_not_taken_when_unsigned_larger() {
-        let mut p = Processor::new(0, 0, 0, 0);
+        let mut p = Processor::new();
         p.write_register(1, 0xFFFFFFFF); // largest unsigned
         p.write_register(2, 1);
         p.pc = 0;
@@ -1105,7 +1036,7 @@ mod tests {
 
     #[test]
     fn test_jal_saves_return_address_and_jumps() {
-        let mut p = Processor::new(0, 0, 0, 0);
+        let mut p = Processor::new();
         p.pc = 0x100;
         p.execute(Instruction::Jal { rd: 1, imm: 16 }).unwrap();
         assert_eq!(p.read_register(1), 0x104); // return address = PC+4
@@ -1114,7 +1045,7 @@ mod tests {
 
     #[test]
     fn test_jal_negative_offset() {
-        let mut p = Processor::new(0, 0, 0, 0);
+        let mut p = Processor::new();
         p.pc = 0x100;
         p.execute(Instruction::Jal { rd: 1, imm: -4 }).unwrap();
         assert_eq!(p.read_register(1), 0x104);
@@ -1123,7 +1054,7 @@ mod tests {
 
     #[test]
     fn test_jalr_saves_return_address_and_jumps() {
-        let mut p = Processor::new(0, 0, 0, 0);
+        let mut p = Processor::new();
         p.pc = 0x100;
         p.write_register(2, 0x200);
         p.execute(Instruction::Jalr { rd: 1, rs1: 2, imm: 4 }).unwrap();
@@ -1133,7 +1064,7 @@ mod tests {
 
     #[test]
     fn test_jalr_clears_lsb() {
-        let mut p = Processor::new(0, 0, 0, 0);
+        let mut p = Processor::new();
         p.pc = 0x100;
         p.write_register(2, 0x200);
         p.execute(Instruction::Jalr { rd: 1, rs1: 2, imm: 1 }).unwrap(); // rs1 + imm = 0x201
@@ -1142,7 +1073,7 @@ mod tests {
 
     #[test]
     fn test_lui_loads_upper_immediate() {
-        let mut p = Processor::new(0, 0, 0, 0);
+        let mut p = Processor::new();
         p.execute(Instruction::Lui { rd: 1, imm: 0x12345000 }).unwrap();
         assert_eq!(p.read_register(1), 0x12345000);
     }
@@ -1151,7 +1082,7 @@ mod tests {
     fn test_lui_ignores_pc() {
         // With pc=0x100 and imm=0x12345000, AUIPC would produce 0x12345100.
         // LUI must produce 0x12345000, proving it does not add PC.
-        let mut p = Processor::new(0, 0, 0, 0);
+        let mut p = Processor::new();
         p.pc = 0x100;
         p.execute(Instruction::Lui { rd: 1, imm: 0x12345000 }).unwrap();
         assert_eq!(p.read_register(1), 0x12345000);
@@ -1159,7 +1090,7 @@ mod tests {
 
     #[test]
     fn test_auipc_adds_pc() {
-        let mut p = Processor::new(0, 0, 0, 0);
+        let mut p = Processor::new();
         p.pc = 0x100;
         p.execute(Instruction::Auipc { rd: 1, imm: 0x12345000 }).unwrap();
         assert_eq!(p.read_register(1), 0x12345100); // PC + imm
@@ -1167,7 +1098,7 @@ mod tests {
 
     #[test]
     fn test_auipc_at_pc_zero() {
-        let mut p = Processor::new(0, 0, 0, 0);
+        let mut p = Processor::new();
         p.pc = 0x0;
         p.execute(Instruction::Auipc { rd: 1, imm: 0x12345000 }).unwrap();
         // when PC=0, result is just imm
@@ -1177,7 +1108,7 @@ mod tests {
 
     #[test]
     fn test_mtime_increments_each_step() {
-        let mut p = Processor::new(0x1000, 0x2000, 0x7FFF_FFF0, 1024);
+        let mut p = Processor::new();
         // load a nop (addi x0, x0, 0) so step() doesn't fault
         p.load(&[0x13, 0x00, 0x00, 0x00], &[]);
         let before = p.clint_state.lock().unwrap().mtime;
@@ -1188,35 +1119,35 @@ mod tests {
 
     #[test]
     fn test_timer_interrupt_fires_when_enabled() {
-        let mut p = Processor::new(0x1000, 0x2000, 0x7FFF_FFF0, 1024);
-        p.load(&[0x13, 0x00, 0x00, 0x00], &[]); // nop at 0x1000
+        let mut p = Processor::new();
+        p.load(&[0x13, 0x00, 0x00, 0x00], &[]); // nop at TEXT_BASE
         p.csrs.mtvec   = 0x2000;
         p.csrs.mstatus = 1 << 3; // MIE = 1
         p.csrs.mie     = 1 << 7; // MTIE = 1
         // Fire immediately: mtimecmp = 0 means mtime (which starts at 0 and becomes 1) >= 0
         p.clint_state.lock().unwrap().mtimecmp = 0;
         p.step().unwrap();
-        assert_eq!(p.pc,     0x2000);        // jumped to trap handler
-        assert_eq!(p.csrs.mcause, 0x8000_0007);   // timer interrupt
-        assert_eq!(p.csrs.mepc,   0x1000);        // saved PC of interrupted instruction
-        assert_eq!((p.csrs.mstatus >> 3) & 1, 0); // MIE cleared
+        assert_eq!(p.pc,     0x2000);                        // jumped to trap handler
+        assert_eq!(p.csrs.mcause, 0x8000_0007);              // timer interrupt
+        assert_eq!(p.csrs.mepc,   crate::config::TEXT_BASE); // saved PC of interrupted instruction
+        assert_eq!((p.csrs.mstatus >> 3) & 1, 0);            // MIE cleared
     }
 
     #[test]
     fn test_timer_interrupt_blocked_when_mie_clear() {
-        let mut p = Processor::new(0x1000, 0x2000, 0x7FFF_FFF0, 1024);
+        let mut p = Processor::new();
         p.load(&[0x13, 0x00, 0x00, 0x00], &[]); // nop
         p.csrs.mtvec   = 0x2000;
         p.csrs.mstatus = 0;      // MIE = 0 — interrupts globally disabled
         p.csrs.mie     = 1 << 7; // MTIE = 1
         p.clint_state.lock().unwrap().mtimecmp = 0;
         p.step().unwrap();
-        assert_eq!(p.pc, 0x1004); // no interrupt — executed the nop normally
+        assert_eq!(p.pc, crate::config::TEXT_BASE + 4); // no interrupt — executed the nop normally
     }
 
     #[test]
     fn test_mtip_clears_when_mtimecmp_advanced() {
-        let mut p = Processor::new(0x1000, 0x2000, 0x7FFF_FFF0, 1024);
+        let mut p = Processor::new();
         // Two nops so the second step can fetch from 0x1004.
         p.load(&[0x13, 0x00, 0x00, 0x00, 0x13, 0x00, 0x00, 0x00], &[]);
         // No interrupt enable so we can observe mip without being redirected.
@@ -1231,7 +1162,7 @@ mod tests {
 
     #[test]
     fn test_clint_mtimecmp_readable_via_bus() {
-        let p = Processor::new(0x1000, 0x2000, 0x7FFF_FFF0, 1024);
+        let p = Processor::new();
         p.clint_state.lock().unwrap().mtimecmp = 0xDEAD_BEEF_1234_5678;
         let lo = p.bus.read(crate::config::CLINT_BASE + 0x4000, AccessSize::Word).unwrap();
         let hi = p.bus.read(crate::config::CLINT_BASE + 0x4004, AccessSize::Word).unwrap();
@@ -1243,7 +1174,7 @@ mod tests {
 
     #[test]
     fn test_uart_write_via_bus() {
-        let mut p = Processor::new(0x1000, 0x2000, 0x7FFF_FFF0, 1024);
+        let mut p = Processor::new();
         // sw 'A' to UART base (0x1000_0000)
         p.write_register(1, crate::config::UART_BASE);
         p.write_register(2, b'A' as u32);
@@ -1253,7 +1184,7 @@ mod tests {
 
     #[test]
     fn test_uart_lsr_readable_via_bus() {
-        let p = Processor::new(0x1000, 0x2000, 0x7FFF_FFF0, 1024);
+        let p = Processor::new();
         // Read LSR (offset 5 from UART base)
         let lsr = p.bus.read(crate::config::UART_BASE + 5, AccessSize::Byte).unwrap();
         assert_eq!(lsr, 0x60); // THRE + TEMT: TX always ready
@@ -1261,7 +1192,7 @@ mod tests {
 
     #[test]
     fn test_drain_uart_clears_buffer() {
-        let mut p = Processor::new(0x1000, 0x2000, 0x7FFF_FFF0, 1024);
+        let mut p = Processor::new();
         p.write_register(1, crate::config::UART_BASE);
         p.write_register(2, b'X' as u32);
         p.execute(Instruction::Sb { rs1: 1, rs2: 2, imm: 0 }).unwrap();
@@ -1273,7 +1204,7 @@ mod tests {
 
     #[test]
     fn test_ecall_saves_mepc_and_jumps_to_mtvec() {
-        let mut p = Processor::new(0x1000, 0, 0, 0);
+        let mut p = Processor::new();
         p.csrs.mtvec = 0x2000;
         p.pc    = 0x1004;
         p.execute(Instruction::Ecall).unwrap();
@@ -1284,7 +1215,7 @@ mod tests {
 
     #[test]
     fn test_ecall_clears_mie_and_saves_mpie() {
-        let mut p = Processor::new(0, 0, 0, 0);
+        let mut p = Processor::new();
         p.csrs.mstatus = 1 << 3; // MIE = 1
         p.execute(Instruction::Ecall).unwrap();
         assert_eq!((p.csrs.mstatus >> 3) & 1, 0); // MIE cleared
@@ -1293,7 +1224,7 @@ mod tests {
 
     #[test]
     fn test_mret_restores_mepc_and_mie() {
-        let mut p = Processor::new(0, 0, 0, 0);
+        let mut p = Processor::new();
         p.csrs.mepc    = 0x1008; // return address (ecall PC + 4, set by handler)
         p.csrs.mstatus = 1 << 7; // MPIE = 1, MIE = 0
         p.execute(Instruction::Mret).unwrap();
@@ -1304,7 +1235,7 @@ mod tests {
 
     #[test]
     fn test_csr_mscratch_roundtrip() {
-        let mut p = Processor::new(0, 0, 0, 0);
+        let mut p = Processor::new();
         p.write_register(1, 0xDEAD_BEEF);
         // csrw mscratch, x1 — CSRRW rd=x0, csr=0x340
         p.execute(Instruction::Csr { rd: 0, csr_addr: 0x340, write_val: 0xDEAD_BEEF, func3: 1 }).unwrap();
@@ -1316,7 +1247,7 @@ mod tests {
 
     #[test]
     fn test_csr_mstatus_set_and_clear_bits() {
-        let mut p = Processor::new(0, 0, 0, 0);
+        let mut p = Processor::new();
         // csrsi mstatus, 0x8 — CSRRSI: set bit 3 (MIE) using uimm=8
         p.execute(Instruction::Csr { rd: 0, csr_addr: 0x300, write_val: 0x8, func3: 6 }).unwrap();
         assert_eq!((p.csrs.mstatus >> 3) & 1, 1); // MIE now set
@@ -1328,7 +1259,7 @@ mod tests {
     #[test]
     fn test_trap_return_full_round_trip() {
         // Simulate: ecall → handler increments mepc → mret returns past ecall
-        let mut p = Processor::new(0, 0, 0, 0);
+        let mut p = Processor::new();
         p.csrs.mtvec = 0x2000;
         p.pc    = 0x1000;
         p.execute(Instruction::Ecall).unwrap();
@@ -1341,15 +1272,8 @@ mod tests {
 
     #[test]
     fn test_processor_initializes_sp() {
-        let text_base = 0x1000;
-        let data_base = 0x2000;
-        let stack_base = 0x7FFF_FFF0;
-        let stack_size = 1024;
-        let mut p = Processor::new(text_base, data_base, stack_base, stack_size);
-        assert_eq!(p.registers[2], stack_base);
-
-        p.registers[2] = 0x1234;
-        p.reset();
-        assert_eq!(p.registers[2], stack_base);
+        let expected_sp = crate::config::DRAM_BASE + crate::config::DRAM_SIZE;
+        let p = Processor::new();
+        assert_eq!(p.registers[2], expected_sp);
     }
 }

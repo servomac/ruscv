@@ -22,7 +22,7 @@ A RISC-V Assembler and Emulator implementation in Rust.
   - **Data**: `.byte`, `.half`, `.word`, `.ascii`, `.asciz`, `.string`, `.space`
   - **Alignment**: `.align`
   - **Modifiers**: `%hi(symbol)`, `%lo(symbol)`
-- **ELF32 Loader**: Loads pre-compiled ELF32 binaries directly. Handles ROM→RAM split layouts (maps each segment at its VMA and also at its LMA so startup copy routines work), fills small inter-segment alignment gaps with zeroed RAM, and resolves the `tohost` symbol for test pass/fail detection.
+- **ELF32 Loader**: Loads pre-compiled ELF32 binaries directly into a flat 64 MB DRAM region matching the QEMU virt memory map. Copies each PT_LOAD segment at its VMA (and LMA when they differ, so startup copy routines work), and resolves the `tohost` symbol for test pass/fail detection.
 - **Headless ELF Runner**: Runs an ELF binary non-interactively from the command line, printing `PASS` or `FAIL` and exiting with the appropriate code — suitable for scripting and CI. Illegal instruction faults report the exact PC and raw instruction word.
 - **rv32ui Test Suite**: Passes all 40 `rv32ui-p` tests from the official RISC-V test suite (`make run-tests`).
 - **FreeRTOS**: The RISC-V QEMU virt demo builds and runs on ruscv (`make freertos-run`). The demo is compiled for `rv32i_zicsr` (the supported architecture) and prints UART output in real time.
@@ -44,6 +44,7 @@ A RISC-V Assembler and Emulator implementation in Rust.
 - **UART RX**: The UART is TX-only; receive (RBR, LSR RX-ready bit) is not yet implemented.
 - **CLINT Software Interrupts**: `msip` (machine software interrupt) is not yet wired up.
 - **S-mode / U-mode**: Only M-mode is implemented; virtual memory (`satp`, page tables) and privilege transitions are not yet supported.
+- **Memory protection faults**: `MemoryFault` currently only signals out-of-bounds accesses. Proper fault taxonomy — write-to-read-only, unaligned access, and execute-from-non-executable region — would be needed before adding PMP (Physical Memory Protection) or MPU-style enforcement.
 
 ## Project Structure
 
