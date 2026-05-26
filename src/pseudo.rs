@@ -110,8 +110,8 @@ fn apply_fixed(
 ) -> Result<Vec<Statement>, String> {
     if ops.len() != arity {
         return Err(format!(
-            "'{}' expects {} operand{}, got {}",
-            name, arity, if arity == 1 { "" } else { "s" }, ops.len()
+            "Invalid number of operands for '{}' pseudo-instruction. Expected {}, got {}",
+            name, arity, ops.len()
         ));
     }
     let built = out_ops.iter().map(|o| match o {
@@ -670,5 +670,22 @@ mod tests {
             assert_eq!(expanded.len(), 1, "Failed expansion for {}", name);
             assert_eq!(expanded[0].kind, StatementKind::Instruction(expected_name.to_string(), expected_ops), "Mismatch for {}", name);
         }
+    }
+
+    #[test]
+    fn test_fixed_pseudo_wrong_arity() {
+        // too few: mv expects 2, give 1
+        let result = expand_statement(Statement {
+            kind: StatementKind::Instruction("mv".to_string(), vec![Operand::Register(1)]),
+            line: 1,
+        });
+        assert_eq!(result.unwrap_err(), "Invalid number of operands for 'mv' pseudo-instruction. Expected 2, got 1");
+
+        // too many: nop expects 0, give 1
+        let result = expand_statement(Statement {
+            kind: StatementKind::Instruction("nop".to_string(), vec![Operand::Register(1)]),
+            line: 1,
+        });
+        assert_eq!(result.unwrap_err(), "Invalid number of operands for 'nop' pseudo-instruction. Expected 0, got 1");
     }
 }
