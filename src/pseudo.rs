@@ -124,13 +124,14 @@ fn apply_fixed(
 
 // --- Custom expanders ---
 
+fn take_ops<const N: usize>(name: &str, ops: Vec<Operand>) -> Result<[Operand; N], String> {
+    ops.try_into().map_err(|v: Vec<_>| {
+        format!("Invalid number of operands for '{}' pseudo-instruction. Expected {}, got {}", name, N, v.len())
+    })
+}
+
 fn expand_li(_name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<Statement>, String> {
-    if ops.len() != 2 {
-        return Err(format!("'li' expects 2 operands, got {}", ops.len()));
-    }
-    let mut iter = ops.into_iter();
-    let rd    = iter.next().unwrap();
-    let imm_op = iter.next().unwrap();
+    let [rd, imm_op] = take_ops::<2>("li", ops)?;
     let rd_reg = match rd {
         Operand::Register(n) => n,
         _ => return Err(format!("Invalid first operand for 'li': expected a register, got {}", rd)),
@@ -168,12 +169,7 @@ fn expand_li(_name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<Statemen
 }
 
 fn expand_la(_name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<Statement>, String> {
-    if ops.len() != 2 {
-        return Err(format!("Invalid number of operands for 'la' pseudo-instruction. Expected 2, got {}", ops.len()));
-    }
-    let mut iter = ops.into_iter();
-    let rd     = iter.next().unwrap();
-    let symbol = iter.next().unwrap();
+    let [rd, symbol] = take_ops::<2>("la", ops)?;
     let rd_reg = match rd {
         Operand::Register(n) => n,
         _ => return Err(format!("Invalid first operand for 'la' pseudo-instruction. Expected a register, got {}", rd)),
@@ -200,10 +196,8 @@ fn expand_la(_name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<Statemen
 }
 
 fn expand_call(_name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<Statement>, String> {
-    if ops.len() != 1 {
-        return Err(format!("Invalid number of operands for 'call' pseudo-instruction. Expected 1, got {}", ops.len()));
-    }
-    let (hi, lo) = split_hi_lo(ops.into_iter().next().unwrap(), "call")?;
+    let [target] = take_ops::<1>("call", ops)?;
+    let (hi, lo) = split_hi_lo(target, "call")?;
     Ok(vec![
         Statement { kind: StatementKind::Instruction("auipc".to_string(), vec![Operand::Register(1), hi]),                         line },
         Statement { kind: StatementKind::Instruction("jalr".to_string(),  vec![Operand::Register(1), Operand::Register(1), lo]),    line },
@@ -211,10 +205,8 @@ fn expand_call(_name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<Statem
 }
 
 fn expand_tail(_name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<Statement>, String> {
-    if ops.len() != 1 {
-        return Err(format!("Invalid number of operands for 'tail' pseudo-instruction. Expected 1, got {}", ops.len()));
-    }
-    let (hi, lo) = split_hi_lo(ops.into_iter().next().unwrap(), "tail")?;
+    let [target] = take_ops::<1>("tail", ops)?;
+    let (hi, lo) = split_hi_lo(target, "tail")?;
     Ok(vec![
         Statement { kind: StatementKind::Instruction("auipc".to_string(), vec![Operand::Register(6), hi]),                         line },
         Statement { kind: StatementKind::Instruction("jalr".to_string(),  vec![Operand::Register(0), Operand::Register(6), lo]),    line },
@@ -227,16 +219,12 @@ fn expand_load_pseudo(name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<
     if ops.len() != 2 || !matches!(ops[1], Operand::Label(_)) {
         return Ok(vec![Statement { kind: StatementKind::Instruction(name.to_string(), ops), line }]);
     }
-    let mut iter = ops.into_iter();
-    let rd = iter.next().unwrap();
-    let symbol = match iter.next().unwrap() {
-        Operand::Label(s) => s,
-        _ => unreachable!(),
-    };
+    let [rd, symbol] = take_ops::<2>(name, ops)?;
     let rd_reg = match rd {
         Operand::Register(n) => n,
         _ => return Err(format!("Invalid first operand for '{}' pseudo-instruction. Expected a register, got {}", name, rd)),
     };
+    let Operand::Label(symbol) = symbol else { unreachable!() };
     Ok(vec![
         Statement {
             kind: StatementKind::Instruction("auipc".to_string(), vec![
@@ -260,17 +248,12 @@ fn expand_store_pseudo(name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec
     if ops.len() != 3 || !matches!(ops[1], Operand::Label(_)) {
         return Ok(vec![Statement { kind: StatementKind::Instruction(name.to_string(), ops), line }]);
     }
-    let mut iter = ops.into_iter();
-    let rd = iter.next().unwrap();
-    let symbol = match iter.next().unwrap() {
-        Operand::Label(s) => s,
-        _ => unreachable!(),
-    };
-    let rt = iter.next().unwrap();
+    let [rd, symbol, rt] = take_ops::<3>(name, ops)?;
     let rd_reg = match rd {
         Operand::Register(n) => n,
         _ => return Err(format!("Invalid first operand for '{}' pseudo-instruction. Expected a register, got {}", name, rd)),
     };
+    let Operand::Label(symbol) = symbol else { unreachable!() };
     let rt_reg = match rt {
         Operand::Register(n) => n,
         _ => return Err(format!("Invalid third operand for '{}' pseudo-instruction. Expected a register, got {}", name, rt)),
