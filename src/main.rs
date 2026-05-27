@@ -1,14 +1,14 @@
+mod assembler;
+mod bus;
 mod config;
 mod elf_loader;
 mod lexer;
 mod parser;
-mod symbols;
-mod assembler;
 mod processor;
 mod pseudo;
-mod bus;
 mod runner;
 mod session;
+mod symbols;
 mod tui;
 
 fn main() -> Result<(), std::io::Error> {
@@ -36,8 +36,10 @@ fn main() -> Result<(), std::io::Error> {
             runner::TestResult::Fault(e) => {
                 use crate::processor::StepError;
                 match e {
-                    StepError::IllegalInstruction { pc, word } =>
-                        println!("FAULT: IllegalInstruction at pc=0x{:08x} word=0x{:08x}", pc, word),
+                    StepError::IllegalInstruction { pc, word } => println!(
+                        "FAULT: IllegalInstruction at pc=0x{:08x} word=0x{:08x}",
+                        pc, word
+                    ),
                     other => println!("FAULT: {:?}", other),
                 }
                 std::process::exit(1);

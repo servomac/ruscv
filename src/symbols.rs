@@ -1,5 +1,5 @@
+use crate::parser::{DirectiveKind, Operand, Section, Statement, StatementKind};
 use std::collections::HashMap;
-use crate::parser::{Statement, StatementKind, Operand, Section, DirectiveKind};
 
 pub struct SymbolTable {
     symbols: HashMap<String, u32>,
@@ -69,9 +69,13 @@ impl SymbolTable {
         Ok(())
     }
 
-
     // Size in bytes that the directive will occupy in memory
-    fn calculate_directive_size(&self, kind: &DirectiveKind, operands: &[Operand], current_pc: u32) -> Result<u32, String> {
+    fn calculate_directive_size(
+        &self,
+        kind: &DirectiveKind,
+        operands: &[Operand],
+        current_pc: u32,
+    ) -> Result<u32, String> {
         match kind {
             DirectiveKind::Align => {
                 if let Some(Operand::Immediate(pow)) = operands.get(0) {
@@ -82,9 +86,9 @@ impl SymbolTable {
                     Err("Directive .align requires a power of 2 parameter".into())
                 }
             }
-            DirectiveKind::Word  => Ok((operands.len() as u32) * 4),
-            DirectiveKind::Half  => Ok((operands.len() as u32) * 2),
-            DirectiveKind::Byte  => Ok(operands.len() as u32),
+            DirectiveKind::Word => Ok((operands.len() as u32) * 4),
+            DirectiveKind::Half => Ok((operands.len() as u32) * 2),
+            DirectiveKind::Byte => Ok(operands.len() as u32),
             DirectiveKind::Ascii => {
                 let mut total = 0;
                 for op in operands {
@@ -116,7 +120,9 @@ impl SymbolTable {
             }
             DirectiveKind::Balign => {
                 if let Some(Operand::Immediate(n)) = operands.get(0) {
-                    if *n < 1 { return Ok(0); }
+                    if *n < 1 {
+                        return Ok(0);
+                    }
                     let alignment = *n as u32;
                     let aligned_pc = (current_pc + alignment - 1) & !(alignment - 1);
                     Ok(aligned_pc - current_pc)
@@ -179,7 +185,10 @@ mod tests {
         assert_eq!(sym_table.get_address("final"), Some(config::TEXT_BASE + 4)); // 4 bytes for the instruction
         assert_eq!(sym_table.get_address("msg"), Some(config::DATA_BASE));
         assert_eq!(sym_table.get_address("num"), Some(config::DATA_BASE + 4)); // 3 bytes for the string "Hi!" + 1 for \0
-        assert_eq!(sym_table.get_address("text"), Some(config::DATA_BASE + 4 + 4)); // 4 bytes for the word
+        assert_eq!(
+            sym_table.get_address("text"),
+            Some(config::DATA_BASE + 4 + 4)
+        ); // 4 bytes for the word
     }
 
     #[test]
@@ -198,7 +207,10 @@ mod tests {
         let mut sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         sym_table.build(&statements).unwrap();
 
-        assert_eq!(sym_table.get_address("my_aligned_label"), Some(config::DATA_BASE + 0x10)) // "Hi\0" = 3 bytes, then padded to 16-byte boundary (2^4)
+        assert_eq!(
+            sym_table.get_address("my_aligned_label"),
+            Some(config::DATA_BASE + 0x10)
+        ) // "Hi\0" = 3 bytes, then padded to 16-byte boundary (2^4)
     }
 
     #[test]

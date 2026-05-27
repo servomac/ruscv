@@ -1,7 +1,7 @@
-use std::mem::discriminant;
 use std::fmt;
+use std::mem::discriminant;
 
-use crate::lexer::{SpannedToken, Token, ModifierKind};
+use crate::lexer::{ModifierKind, SpannedToken, Token};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Section {
@@ -15,12 +15,12 @@ pub enum DirectiveKind {
     Data,
     Align,
     Balign,
-    Globl,   // no-op; marks a label as globally visible (no ELF output)
+    Globl, // no-op; marks a label as globally visible (no ELF output)
     Byte,
     Half,
     Word,
     Ascii,
-    Asciz,  // covers .asciz, .asciiz, .string
+    Asciz, // covers .asciz, .asciiz, .string
     Space,
     Unknown(String),
 }
@@ -28,17 +28,17 @@ pub enum DirectiveKind {
 impl fmt::Display for DirectiveKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DirectiveKind::Text    => write!(f, ".text"),
-            DirectiveKind::Data    => write!(f, ".data"),
-            DirectiveKind::Align   => write!(f, ".align"),
-            DirectiveKind::Balign  => write!(f, ".balign"),
-            DirectiveKind::Globl   => write!(f, ".globl"),
-            DirectiveKind::Byte    => write!(f, ".byte"),
-            DirectiveKind::Half    => write!(f, ".half"),
-            DirectiveKind::Word    => write!(f, ".word"),
-            DirectiveKind::Ascii   => write!(f, ".ascii"),
-            DirectiveKind::Asciz   => write!(f, ".asciz"),
-            DirectiveKind::Space   => write!(f, ".space"),
+            DirectiveKind::Text => write!(f, ".text"),
+            DirectiveKind::Data => write!(f, ".data"),
+            DirectiveKind::Align => write!(f, ".align"),
+            DirectiveKind::Balign => write!(f, ".balign"),
+            DirectiveKind::Globl => write!(f, ".globl"),
+            DirectiveKind::Byte => write!(f, ".byte"),
+            DirectiveKind::Half => write!(f, ".half"),
+            DirectiveKind::Word => write!(f, ".word"),
+            DirectiveKind::Ascii => write!(f, ".ascii"),
+            DirectiveKind::Asciz => write!(f, ".asciz"),
+            DirectiveKind::Space => write!(f, ".space"),
             DirectiveKind::Unknown(s) => write!(f, "{}", s),
         }
     }
@@ -47,18 +47,18 @@ impl fmt::Display for DirectiveKind {
 impl From<&str> for DirectiveKind {
     fn from(s: &str) -> Self {
         match s {
-            ".text"                          => DirectiveKind::Text,
-            ".data"                          => DirectiveKind::Data,
-            ".align"                         => DirectiveKind::Align,
-            ".balign"                        => DirectiveKind::Balign,
-            ".globl" | ".global"             => DirectiveKind::Globl,
-            ".byte"                          => DirectiveKind::Byte,
-            ".half"                          => DirectiveKind::Half,
-            ".word"                          => DirectiveKind::Word,
-            ".ascii"                         => DirectiveKind::Ascii,
+            ".text" => DirectiveKind::Text,
+            ".data" => DirectiveKind::Data,
+            ".align" => DirectiveKind::Align,
+            ".balign" => DirectiveKind::Balign,
+            ".globl" | ".global" => DirectiveKind::Globl,
+            ".byte" => DirectiveKind::Byte,
+            ".half" => DirectiveKind::Half,
+            ".word" => DirectiveKind::Word,
+            ".ascii" => DirectiveKind::Ascii,
             ".asciz" | ".asciiz" | ".string" => DirectiveKind::Asciz,
-            ".space" | ".skip" | ".zero"     => DirectiveKind::Space,
-            _                                => DirectiveKind::Unknown(s.to_string()),
+            ".space" | ".skip" | ".zero" => DirectiveKind::Space,
+            _ => DirectiveKind::Unknown(s.to_string()),
         }
     }
 }
@@ -190,7 +190,10 @@ pub struct Parser {
 
 impl Parser {
     pub fn new(tokens: Vec<SpannedToken>) -> Self {
-        Parser { tokens, position: 0 }
+        Parser {
+            tokens,
+            position: 0,
+        }
     }
 
     // Gets the current token without advancing the position
@@ -200,7 +203,9 @@ impl Parser {
 
     // Checks if the current token matches the expected token
     fn check(&self, expected: &Token) -> bool {
-        if self.is_at_end() { return false; }
+        if self.is_at_end() {
+            return false;
+        }
         discriminant(self.peek()) == discriminant(expected)
     }
 
@@ -242,7 +247,7 @@ impl Parser {
                 Ok(Some(stmt)) => nodes.push(stmt),
                 Ok(None) => {
                     continue;
-                },
+                }
                 Err(e) => return Err(e),
             }
         }
@@ -250,7 +255,9 @@ impl Parser {
     }
 
     fn parse_line(&mut self) -> Result<Option<Statement>, ParseError> {
-        if self.is_at_end() { return Ok(None); }
+        if self.is_at_end() {
+            return Ok(None);
+        }
 
         let current_token = self.peek().clone();
         let line = self.tokens[self.position].line;
@@ -261,7 +268,7 @@ impl Parser {
                 self.advance();
                 self.consume(&Token::Colon, "A colon is expected after a label (':')")?;
                 StatementKind::Label(label_name)
-            },
+            }
 
             Token::Instruction(mnemonic) => {
                 self.advance();
@@ -276,7 +283,7 @@ impl Parser {
                     }
                 }
                 StatementKind::Instruction(mnemonic, operands)
-            },
+            }
 
             Token::Directive(directive) => {
                 self.advance();
@@ -291,21 +298,25 @@ impl Parser {
                     }
                 }
                 StatementKind::Directive(DirectiveKind::from(directive.as_str()), operands)
-            },
+            }
 
             Token::Newline => {
                 self.advance();
                 return Ok(None);
             }
 
-            _ => return Err(ParseError {
-                line,
-                message: format!("Unexpected token: {:?}", current_token)
-            }),
-
+            _ => {
+                return Err(ParseError {
+                    line,
+                    message: format!("Unexpected token: {:?}", current_token),
+                })
+            }
         };
 
-        Ok(Some(Statement { kind: statement_kind, line }))
+        Ok(Some(Statement {
+            kind: statement_kind,
+            line,
+        }))
     }
 
     fn parse_operand(&mut self) -> Result<Operand, ParseError> {
@@ -409,7 +420,7 @@ impl Parser {
             Token::StringLiteral(s) => {
                 self.advance();
                 Ok(Operand::StringLiteral(s))
-            },
+            }
             _ => self.parse_operand(),
         }
     }
@@ -430,11 +441,17 @@ mod tests {
     fn test_r_instruction_parsing() {
         let nodes = parse("add x1, x2, x3");
         assert_eq!(nodes.len(), 1);
-        assert_eq!(nodes[0].kind, StatementKind::Instruction("add".to_string(), vec![
-            Operand::Register(1),
-            Operand::Register(2),
-            Operand::Register(3),
-        ]));
+        assert_eq!(
+            nodes[0].kind,
+            StatementKind::Instruction(
+                "add".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Register(2),
+                    Operand::Register(3),
+                ]
+            )
+        );
         assert_eq!(nodes[0].line, 1);
     }
 
@@ -442,11 +459,17 @@ mod tests {
     fn test_i_instruction_parsing() {
         let nodes = parse("addi x1, x2, 10");
         assert_eq!(nodes.len(), 1);
-        assert_eq!(nodes[0].kind, StatementKind::Instruction("addi".to_string(), vec![
-            Operand::Register(1),
-            Operand::Register(2),
-            Operand::Immediate(10),
-        ]));
+        assert_eq!(
+            nodes[0].kind,
+            StatementKind::Instruction(
+                "addi".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Register(2),
+                    Operand::Immediate(10),
+                ]
+            )
+        );
         assert_eq!(nodes[0].line, 1);
     }
 
@@ -454,10 +477,19 @@ mod tests {
     fn test_s_instruction_parsing() {
         let nodes = parse("sw x1, 4(x2)");
         assert_eq!(nodes.len(), 1);
-        assert_eq!(nodes[0].kind, StatementKind::Instruction("sw".to_string(), vec![
-            Operand::Register(1),
-            Operand::Memory { offset: MemoryOffset::Immediate(4), reg: 2 },
-        ]));
+        assert_eq!(
+            nodes[0].kind,
+            StatementKind::Instruction(
+                "sw".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Memory {
+                        offset: MemoryOffset::Immediate(4),
+                        reg: 2
+                    },
+                ]
+            )
+        );
         assert_eq!(nodes[0].line, 1);
     }
 
@@ -467,11 +499,17 @@ mod tests {
         assert_eq!(nodes.len(), 2);
         assert_eq!(nodes[0].kind, StatementKind::Label("loop".to_string()));
         assert_eq!(nodes[0].line, 1);
-        assert_eq!(nodes[1].kind, StatementKind::Instruction("add".to_string(), vec![
-            Operand::Register(1),
-            Operand::Register(2),
-            Operand::Register(3),
-        ]));
+        assert_eq!(
+            nodes[1].kind,
+            StatementKind::Instruction(
+                "add".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Register(2),
+                    Operand::Register(3),
+                ]
+            )
+        );
         assert_eq!(nodes[1].line, 2);
     }
 
@@ -479,13 +517,17 @@ mod tests {
     fn test_directive_parsing() {
         let nodes = parse(".data\nmyVar: .word 42");
         assert_eq!(nodes.len(), 3);
-        assert_eq!(nodes[0].kind, StatementKind::Directive(DirectiveKind::Data, vec![]));
+        assert_eq!(
+            nodes[0].kind,
+            StatementKind::Directive(DirectiveKind::Data, vec![])
+        );
         assert_eq!(nodes[0].line, 1);
         assert_eq!(nodes[1].kind, StatementKind::Label("myVar".to_string()));
         assert_eq!(nodes[1].line, 2);
-        assert_eq!(nodes[2].kind, StatementKind::Directive(DirectiveKind::Word, vec![
-            Operand::Immediate(42),
-        ]));
+        assert_eq!(
+            nodes[2].kind,
+            StatementKind::Directive(DirectiveKind::Word, vec![Operand::Immediate(42),])
+        );
         assert_eq!(nodes[2].line, 2);
     }
 
@@ -494,9 +536,13 @@ mod tests {
         let nodes = parse(".asciiz \"Hello, world!\"");
         assert_eq!(nodes.len(), 1);
         // .asciiz is normalized to DirectiveKind::Asciz at parse time
-        assert_eq!(nodes[0].kind, StatementKind::Directive(DirectiveKind::Asciz, vec![
-            Operand::StringLiteral("Hello, world!".to_string()),
-        ]));
+        assert_eq!(
+            nodes[0].kind,
+            StatementKind::Directive(
+                DirectiveKind::Asciz,
+                vec![Operand::StringLiteral("Hello, world!".to_string()),]
+            )
+        );
         assert_eq!(nodes[0].line, 1);
     }
 
@@ -504,10 +550,19 @@ mod tests {
     fn test_label_in_memory_operand_parsing() {
         let nodes = parse("sw x1, my_label(x2)");
         assert_eq!(nodes.len(), 1);
-        assert_eq!(nodes[0].kind, StatementKind::Instruction("sw".to_string(), vec![
-            Operand::Register(1),
-            Operand::Memory { offset: MemoryOffset::Label("my_label".to_string()), reg: 2 },
-        ]));
+        assert_eq!(
+            nodes[0].kind,
+            StatementKind::Instruction(
+                "sw".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Memory {
+                        offset: MemoryOffset::Label("my_label".to_string()),
+                        reg: 2
+                    },
+                ]
+            )
+        );
         assert_eq!(nodes[0].line, 1);
     }
 
@@ -515,34 +570,52 @@ mod tests {
     fn test_hi_modifier_parsing() {
         let nodes = parse("lui x1, %hi(label)");
         assert_eq!(nodes.len(), 1);
-        assert_eq!(nodes[0].kind, StatementKind::Instruction("lui".to_string(), vec![
-            Operand::Register(1),
-            Operand::Modifier(ModifierKind::Hi, "label".to_string()),
-        ]));
+        assert_eq!(
+            nodes[0].kind,
+            StatementKind::Instruction(
+                "lui".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Modifier(ModifierKind::Hi, "label".to_string()),
+                ]
+            )
+        );
     }
 
     #[test]
     fn test_lo_modifier_parsing() {
         let nodes = parse("addi x1, x1, %lo(label)");
         assert_eq!(nodes.len(), 1);
-        assert_eq!(nodes[0].kind, StatementKind::Instruction("addi".to_string(), vec![
-            Operand::Register(1),
-            Operand::Register(1),
-            Operand::Modifier(ModifierKind::Lo, "label".to_string()),
-        ]));
+        assert_eq!(
+            nodes[0].kind,
+            StatementKind::Instruction(
+                "addi".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Register(1),
+                    Operand::Modifier(ModifierKind::Lo, "label".to_string()),
+                ]
+            )
+        );
     }
 
     #[test]
     fn test_modifier_in_memory_operand_parsing() {
         let nodes = parse("lw x1, %lo(label)(x2)");
         assert_eq!(nodes.len(), 1);
-        assert_eq!(nodes[0].kind, StatementKind::Instruction("lw".to_string(), vec![
-            Operand::Register(1),
-            Operand::Memory {
-                offset: MemoryOffset::Modifier(ModifierKind::Lo, "label".to_string()),
-                reg: 2
-            },
-        ]));
+        assert_eq!(
+            nodes[0].kind,
+            StatementKind::Instruction(
+                "lw".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Memory {
+                        offset: MemoryOffset::Modifier(ModifierKind::Lo, "label".to_string()),
+                        reg: 2
+                    },
+                ]
+            )
+        );
     }
 
     #[test]

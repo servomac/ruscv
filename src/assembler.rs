@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use crate::parser::{Statement, StatementKind, Operand, MemoryOffset, Section, DirectiveKind};
 use crate::lexer::ModifierKind;
+use crate::parser::{DirectiveKind, MemoryOffset, Operand, Section, Statement, StatementKind};
 use crate::symbols::SymbolTable;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -42,13 +42,22 @@ pub struct Assembler {
 
 impl Assembler {
     pub fn new(text_base: u32, data_base: u32) -> Self {
-        Self { text_base, data_base }
+        Self {
+            text_base,
+            data_base,
+        }
     }
 
-    pub fn assemble(&self, statements: &[Statement], sym_table: &SymbolTable) -> Result<AssembledProgram, Vec<AssemblerError>> {
+    pub fn assemble(
+        &self,
+        statements: &[Statement],
+        sym_table: &SymbolTable,
+    ) -> Result<AssembledProgram, Vec<AssemblerError>> {
         let mut text_bin = Vec::new();
         let mut data_bin = Vec::new();
-        let mut debug_info = DebugInfo { address_to_source: HashMap::new() };
+        let mut debug_info = DebugInfo {
+            address_to_source: HashMap::new(),
+        };
 
         let mut current_pc = self.text_base;
         let mut data_pc = self.data_base;
@@ -56,13 +65,20 @@ impl Assembler {
         let mut errors = Vec::new();
 
         for stmt in statements {
-            let addr = if current_section == Section::Text { current_pc } else { data_pc };
+            let addr = if current_section == Section::Text {
+                current_pc
+            } else {
+                data_pc
+            };
 
-            debug_info.address_to_source.insert(addr, SourceMapping {
-                line: stmt.line,
-                raw_text: stmt.to_string(),
-                section: current_section,
-            });
+            debug_info.address_to_source.insert(
+                addr,
+                SourceMapping {
+                    line: stmt.line,
+                    raw_text: stmt.to_string(),
+                    section: current_section,
+                },
+            );
 
             match &stmt.kind {
                 StatementKind::Instruction(name, ops) => {
@@ -78,9 +94,17 @@ impl Assembler {
                 }
                 StatementKind::Directive(kind, ops) => {
                     match kind {
-                        DirectiveKind::Text => { current_section = Section::Text; continue; }
-                        DirectiveKind::Data => { current_section = Section::Data; continue; }
-                        DirectiveKind::Globl => { continue; }
+                        DirectiveKind::Text => {
+                            current_section = Section::Text;
+                            continue;
+                        }
+                        DirectiveKind::Data => {
+                            current_section = Section::Data;
+                            continue;
+                        }
+                        DirectiveKind::Globl => {
+                            continue;
+                        }
                         DirectiveKind::Align => {
                             if let Some(Operand::Immediate(pow)) = ops.get(0) {
                                 let alignment = 2u32.pow(*pow as u32);
@@ -94,14 +118,23 @@ impl Assembler {
                                     data_pc += padding;
                                 }
                             } else {
-                                errors.push(AssemblerError::new(stmt.line, "Directive .align requires an immediate value".to_string()));
+                                errors.push(AssemblerError::new(
+                                    stmt.line,
+                                    "Directive .align requires an immediate value".to_string(),
+                                ));
                             }
                             continue;
                         }
                         DirectiveKind::Balign => {
                             if let Some(Operand::Immediate(n)) = ops.get(0) {
                                 if *n < 1 {
-                                    errors.push(AssemblerError::new(stmt.line, format!(".balign requires a positive byte count, got {}", n)));
+                                    errors.push(AssemblerError::new(
+                                        stmt.line,
+                                        format!(
+                                            ".balign requires a positive byte count, got {}",
+                                            n
+                                        ),
+                                    ));
                                 } else {
                                     let alignment = *n as u32;
                                     let padding = (alignment - (addr % alignment)) % alignment;
@@ -115,7 +148,10 @@ impl Assembler {
                                     }
                                 }
                             } else {
-                                errors.push(AssemblerError::new(stmt.line, "Directive .balign requires an immediate value".to_string()));
+                                errors.push(AssemblerError::new(
+                                    stmt.line,
+                                    "Directive .balign requires an immediate value".to_string(),
+                                ));
                             }
                             continue;
                         }
@@ -145,79 +181,88 @@ impl Assembler {
         if !errors.is_empty() {
             return Err(errors);
         }
-        Ok(AssembledProgram { text_bin, data_bin, debug_info })
+        Ok(AssembledProgram {
+            text_bin,
+            data_bin,
+            debug_info,
+        })
     }
 }
 
-fn encode_instruction(name: &str, ops: &[Operand], sym_table: &SymbolTable, current_pc: u32) -> Result<u32, String> {
+fn encode_instruction(
+    name: &str,
+    ops: &[Operand],
+    sym_table: &SymbolTable,
+    current_pc: u32,
+) -> Result<u32, String> {
     match name {
         // R-type | Opcode: 0x33 | Format: funct7, rs2, rs1, funct3, rd, opcode
-        "add"   => encode_r_type(0x33, 0x0, 0x00, ops),
-        "sub"   => encode_r_type(0x33, 0x0, 0x20, ops),
-        "sll"   => encode_r_type(0x33, 0x1, 0x00, ops),
-        "slt"   => encode_r_type(0x33, 0x2, 0x00, ops),
-        "sltu"  => encode_r_type(0x33, 0x3, 0x00, ops),
-        "xor"   => encode_r_type(0x33, 0x4, 0x00, ops),
-        "srl"   => encode_r_type(0x33, 0x5, 0x00, ops),
-        "sra"   => encode_r_type(0x33, 0x5, 0x20, ops),
-        "or"    => encode_r_type(0x33, 0x6, 0x00, ops),
-        "and"   => encode_r_type(0x33, 0x7, 0x00, ops),
+        "add" => encode_r_type(0x33, 0x0, 0x00, ops),
+        "sub" => encode_r_type(0x33, 0x0, 0x20, ops),
+        "sll" => encode_r_type(0x33, 0x1, 0x00, ops),
+        "slt" => encode_r_type(0x33, 0x2, 0x00, ops),
+        "sltu" => encode_r_type(0x33, 0x3, 0x00, ops),
+        "xor" => encode_r_type(0x33, 0x4, 0x00, ops),
+        "srl" => encode_r_type(0x33, 0x5, 0x00, ops),
+        "sra" => encode_r_type(0x33, 0x5, 0x20, ops),
+        "or" => encode_r_type(0x33, 0x6, 0x00, ops),
+        "and" => encode_r_type(0x33, 0x7, 0x00, ops),
 
         // I-type | Opcode: 0x13 for ALU, 0x03 for Loads, 0x67 for jalr
-        "addi"  => encode_i_type(0x13, 0x0, ops, sym_table),
-        "slti"  => encode_i_type(0x13, 0x2, ops, sym_table),
+        "addi" => encode_i_type(0x13, 0x0, ops, sym_table),
+        "slti" => encode_i_type(0x13, 0x2, ops, sym_table),
         "sltiu" => encode_i_type(0x13, 0x3, ops, sym_table),
-        "xori"  => encode_i_type(0x13, 0x4, ops, sym_table),
-        "ori"   => encode_i_type(0x13, 0x6, ops, sym_table),
-        "andi"  => encode_i_type(0x13, 0x7, ops, sym_table),
-        "slli"  => encode_i_shift(0x13, 0x1, 0x00, ops), // Special: uses shift amount
-        "srli"  => encode_i_shift(0x13, 0x5, 0x00, ops),
-        "srai"  => encode_i_shift(0x13, 0x5, 0x20, ops),
+        "xori" => encode_i_type(0x13, 0x4, ops, sym_table),
+        "ori" => encode_i_type(0x13, 0x6, ops, sym_table),
+        "andi" => encode_i_type(0x13, 0x7, ops, sym_table),
+        "slli" => encode_i_shift(0x13, 0x1, 0x00, ops), // Special: uses shift amount
+        "srli" => encode_i_shift(0x13, 0x5, 0x00, ops),
+        "srai" => encode_i_shift(0x13, 0x5, 0x20, ops),
 
-        "lb"    => encode_i_type(0x03, 0x0, ops, sym_table),
-        "lh"    => encode_i_type(0x03, 0x1, ops, sym_table),
-        "lw"    => encode_i_type(0x03, 0x2, ops, sym_table),
-        "lbu"   => encode_i_type(0x03, 0x4, ops, sym_table),
-        "lhu"   => encode_i_type(0x03, 0x5, ops, sym_table),
+        "lb" => encode_i_type(0x03, 0x0, ops, sym_table),
+        "lh" => encode_i_type(0x03, 0x1, ops, sym_table),
+        "lw" => encode_i_type(0x03, 0x2, ops, sym_table),
+        "lbu" => encode_i_type(0x03, 0x4, ops, sym_table),
+        "lhu" => encode_i_type(0x03, 0x5, ops, sym_table),
 
-        "jalr"  => encode_i_type(0x67, 0x0, ops, sym_table),
+        "jalr" => encode_i_type(0x67, 0x0, ops, sym_table),
 
         // S-type | Opcode: 0x23
-        "sb"    => encode_s_type(0x23, 0x0, ops, sym_table),
-        "sh"    => encode_s_type(0x23, 0x1, ops, sym_table),
-        "sw"    => encode_s_type(0x23, 0x2, ops, sym_table),
+        "sb" => encode_s_type(0x23, 0x0, ops, sym_table),
+        "sh" => encode_s_type(0x23, 0x1, ops, sym_table),
+        "sw" => encode_s_type(0x23, 0x2, ops, sym_table),
 
         // B-type | Opcode: 0x63
-        "beq"   => encode_b_type(0x63, 0x0, ops, sym_table, current_pc),
-        "bne"   => encode_b_type(0x63, 0x1, ops, sym_table, current_pc),
-        "blt"   => encode_b_type(0x63, 0x4, ops, sym_table, current_pc),
-        "bge"   => encode_b_type(0x63, 0x5, ops, sym_table, current_pc),
-        "bltu"  => encode_b_type(0x63, 0x6, ops, sym_table, current_pc),
-        "bgeu"  => encode_b_type(0x63, 0x7, ops, sym_table, current_pc),
+        "beq" => encode_b_type(0x63, 0x0, ops, sym_table, current_pc),
+        "bne" => encode_b_type(0x63, 0x1, ops, sym_table, current_pc),
+        "blt" => encode_b_type(0x63, 0x4, ops, sym_table, current_pc),
+        "bge" => encode_b_type(0x63, 0x5, ops, sym_table, current_pc),
+        "bltu" => encode_b_type(0x63, 0x6, ops, sym_table, current_pc),
+        "bgeu" => encode_b_type(0x63, 0x7, ops, sym_table, current_pc),
 
         // U-type | Opcode: 0x37 lui, 0x17 auipc
-        "lui"   => encode_u_type(0x37, ops, sym_table),
+        "lui" => encode_u_type(0x37, ops, sym_table),
         "auipc" => encode_u_type(0x17, ops, sym_table),
 
         // J-type | Opcode: 0x6F
-        "jal"   => encode_j_type(0x6F, ops, sym_table, current_pc),
+        "jal" => encode_j_type(0x6F, ops, sym_table, current_pc),
 
         // CSR instructions (Zicsr) | Opcode: 0x73
-        "csrrw"  => encode_csr(0x1, ops),
-        "csrrs"  => encode_csr(0x2, ops),
-        "csrrc"  => encode_csr(0x3, ops),
+        "csrrw" => encode_csr(0x1, ops),
+        "csrrs" => encode_csr(0x2, ops),
+        "csrrc" => encode_csr(0x3, ops),
         "csrrwi" => encode_csr_imm(0x5, ops),
         "csrrsi" => encode_csr_imm(0x6, ops),
         "csrrci" => encode_csr_imm(0x7, ops),
 
         // System and Miscellaneous
-        "ecall"   => Ok(0x00000073),
-        "ebreak"  => Ok(0x00100073),
-        "fence"   => Ok(0x0FF0000F),
+        "ecall" => Ok(0x00000073),
+        "ebreak" => Ok(0x00100073),
+        "fence" => Ok(0x0FF0000F),
         "fence.i" => Ok(0x0000100F),
-        "mret"    => Ok(0x30200073),
-        "sret"    => Ok(0x10200073),
-        "wfi"     => Ok(0x10500073),
+        "mret" => Ok(0x30200073),
+        "sret" => Ok(0x10200073),
+        "wfi" => Ok(0x10500073),
 
         _ => Err(format!("Unsupported instruction '{}'", name)),
     }
@@ -227,17 +272,27 @@ fn csr_addr(op: &Operand) -> Result<u32, String> {
     match op {
         Operand::Immediate(v) => Ok(*v as u32 & 0xFFF),
         Operand::Label(name) => match name.as_str() {
-            "mstatus"  => Ok(0x300), "misa"     => Ok(0x301),
-            "mie"      => Ok(0x304), "mtvec"    => Ok(0x305),
-            "mscratch" => Ok(0x340), "mepc"     => Ok(0x341),
-            "mcause"   => Ok(0x342), "mtval"    => Ok(0x343),
-            "mip"      => Ok(0x344), "mhartid"  => Ok(0xF14),
-            "sstatus"  => Ok(0x100), "sie"      => Ok(0x104),
-            "stvec"    => Ok(0x105), "sscratch" => Ok(0x140),
-            "sepc"     => Ok(0x141), "scause"   => Ok(0x142),
-            "stval"    => Ok(0x143), "sip"      => Ok(0x144),
-            "cycle"    => Ok(0xC00), "time"     => Ok(0xC01),
-            "instret"  => Ok(0xC02),
+            "mstatus" => Ok(0x300),
+            "misa" => Ok(0x301),
+            "mie" => Ok(0x304),
+            "mtvec" => Ok(0x305),
+            "mscratch" => Ok(0x340),
+            "mepc" => Ok(0x341),
+            "mcause" => Ok(0x342),
+            "mtval" => Ok(0x343),
+            "mip" => Ok(0x344),
+            "mhartid" => Ok(0xF14),
+            "sstatus" => Ok(0x100),
+            "sie" => Ok(0x104),
+            "stvec" => Ok(0x105),
+            "sscratch" => Ok(0x140),
+            "sepc" => Ok(0x141),
+            "scause" => Ok(0x142),
+            "stval" => Ok(0x143),
+            "sip" => Ok(0x144),
+            "cycle" => Ok(0xC00),
+            "time" => Ok(0xC01),
+            "instret" => Ok(0xC02),
             _ => Err(format!("Unknown CSR '{}'", name)),
         },
         _ => Err("CSR operand must be an immediate or CSR name".to_string()),
@@ -247,7 +302,11 @@ fn csr_addr(op: &Operand) -> Result<u32, String> {
 fn encode_csr(funct3: u8, ops: &[Operand]) -> Result<u32, String> {
     if let [Operand::Register(rd), csr_op, Operand::Register(rs1)] = ops {
         let csr = csr_addr(csr_op)?;
-        Ok((csr << 20) | ((*rs1 as u32) << 15) | ((funct3 as u32) << 12) | ((*rd as u32) << 7) | 0x73)
+        Ok((csr << 20)
+            | ((*rs1 as u32) << 15)
+            | ((funct3 as u32) << 12)
+            | ((*rd as u32) << 7)
+            | 0x73)
     } else {
         Err("Invalid operands for CSR instruction: expected rd, csr, rs1".to_string())
     }
@@ -259,7 +318,11 @@ fn encode_csr_imm(funct3: u8, ops: &[Operand]) -> Result<u32, String> {
         if *uimm < 0 || *uimm > 31 {
             return Err(format!("CSR immediate {} out of range (0-31)", uimm));
         }
-        Ok((csr << 20) | ((*uimm as u32) << 15) | ((funct3 as u32) << 12) | ((*rd as u32) << 7) | 0x73)
+        Ok((csr << 20)
+            | ((*uimm as u32) << 15)
+            | ((funct3 as u32) << 12)
+            | ((*rd as u32) << 7)
+            | 0x73)
     } else {
         Err("Invalid operands for CSR immediate instruction: expected rd, csr, uimm".to_string())
     }
@@ -267,49 +330,54 @@ fn encode_csr_imm(funct3: u8, ops: &[Operand]) -> Result<u32, String> {
 
 fn encode_r_type(opcode: u8, funct3: u8, funct7: u8, ops: &[Operand]) -> Result<u32, String> {
     if let [Operand::Register(rd), Operand::Register(rs1), Operand::Register(rs2)] = ops {
-        Ok(((funct7 as u32) << 25) | ((*rs2 as u32) << 20) | ((*rs1 as u32) << 15) | ((funct3 as u32) << 12) | ((*rd as u32) << 7) | (opcode as u32))
+        Ok(((funct7 as u32) << 25)
+            | ((*rs2 as u32) << 20)
+            | ((*rs1 as u32) << 15)
+            | ((funct3 as u32) << 12)
+            | ((*rd as u32) << 7)
+            | (opcode as u32))
     } else {
-        Err("Invalid operands for R-type instruction: expected 3 registers (rd, rs1, rs2)".to_string())
+        Err(
+            "Invalid operands for R-type instruction: expected 3 registers (rd, rs1, rs2)"
+                .to_string(),
+        )
     }
 }
 
-fn encode_i_type(opcode: u8, funct3: u8, ops: &[Operand], sym_table: &SymbolTable) -> Result<u32, String> {
+fn encode_i_type(
+    opcode: u8,
+    funct3: u8,
+    ops: &[Operand],
+    sym_table: &SymbolTable,
+) -> Result<u32, String> {
     let (rd, rs1, base_op) = match (opcode, ops) {
         // load: rd, offset(rs1)
-        (0x03, [Operand::Register(rd), mem @ Operand::Memory { reg, .. }]) => {
-            (*rd, *reg, mem)
-        },
+        (0x03, [Operand::Register(rd), mem @ Operand::Memory { reg, .. }]) => (*rd, *reg, mem),
         // alu immediate and jalr: rd, rs1, imm
-        (0x13 | 0x67, [Operand::Register(rd), Operand::Register(rs1), imm]) => {
-            (*rd, *rs1, imm)
-        },
+        (0x13 | 0x67, [Operand::Register(rd), Operand::Register(rs1), imm]) => (*rd, *rs1, imm),
         // jalr: rd, offset(rs1)
-        (0x67, [Operand::Register(rd), mem @ Operand::Memory { reg, .. }]) => {
-            (*rd, *reg, mem)
-        },
+        (0x67, [Operand::Register(rd), mem @ Operand::Memory { reg, .. }]) => (*rd, *reg, mem),
         _ => return Err("Invalid operands for I-type instruction".to_string()),
     };
 
     let imm_val = resolve_any_immediate(base_op, sym_table)?;
 
     if imm_val < -2048 || imm_val > 2047 {
-        return Err(format!("Immediate value {} out of range for 12-bit field", imm_val));
+        return Err(format!(
+            "Immediate value {} out of range for 12-bit field",
+            imm_val
+        ));
     }
 
-    let instruction = ((imm_val as u32 & 0xFFF) << 20) |
-                      ((rs1 as u32) << 15)            |
-                      ((funct3 as u32) << 12)         |
-                      ((rd as u32) << 7)              |
-                      (opcode as u32);
+    let instruction = ((imm_val as u32 & 0xFFF) << 20)
+        | ((rs1 as u32) << 15)
+        | ((funct3 as u32) << 12)
+        | ((rd as u32) << 7)
+        | (opcode as u32);
     Ok(instruction)
 }
 
-fn encode_i_shift(
-    opcode: u8,
-    funct3: u8,
-    funct7: u8,
-    ops: &[Operand]
-) -> Result<u32, String> {
+fn encode_i_shift(opcode: u8, funct3: u8, funct7: u8, ops: &[Operand]) -> Result<u32, String> {
     if let [Operand::Register(rd), Operand::Register(rs1), Operand::Immediate(shamt)] = ops {
         if *shamt < 0 || *shamt > 31 {
             return Err(format!("Shift amount {} out of range (0-31)", shamt));
@@ -320,7 +388,7 @@ fn encode_i_shift(
                           ((*rs1 as u32) << 15)   | // Source register
                           ((funct3 as u32) << 12) | // Shift type
                           ((*rd as u32) << 7)     | // Destination register
-                          (opcode as u32);          // 0x13
+                          (opcode as u32); // 0x13
 
         Ok(instruction)
     } else {
@@ -340,19 +408,22 @@ fn encode_s_type(
         let imm_val = resolve_memory_offset(offset, sym_table)?;
 
         if imm_val < -2048 || imm_val > 2047 {
-            return Err(format!("Immediate value {} out of range for 12-bit field", imm_val));
+            return Err(format!(
+                "Immediate value {} out of range for 12-bit field",
+                imm_val
+            ));
         }
 
         let imm = (imm_val as u32) & 0xFFF;
         let imm_11_5 = (imm >> 5) & 0x7F; // 7 upper bits
-        let imm_4_0 = imm & 0x1F;         // 5 lower bits
+        let imm_4_0 = imm & 0x1F; // 5 lower bits
 
         let instruction = (imm_11_5 << 25)      | // imm[11:5]
                           ((*rs2 as u32) << 20) | // rs2
                           ((*reg as u32) << 15) | // rs1 (base register)
                           ((funct3 as u32) << 12) | // funct3
                           (imm_4_0 << 7)        | // imm[4:0]
-                          (opcode as u32);        // opcode
+                          (opcode as u32); // opcode
 
         Ok(instruction)
     } else {
@@ -363,7 +434,8 @@ fn encode_s_type(
 fn resolve_memory_offset(offset: &MemoryOffset, sym_table: &SymbolTable) -> Result<i32, String> {
     match offset {
         MemoryOffset::Immediate(val) => Ok(*val),
-        MemoryOffset::Label(name) => sym_table.get_address(name)
+        MemoryOffset::Label(name) => sym_table
+            .get_address(name)
             .map(|addr| addr as i32)
             .ok_or_else(|| format!("Unknown label '{}'", name)),
         MemoryOffset::Modifier(kind, name) => resolve_modifier(kind, name, sym_table),
@@ -376,7 +448,8 @@ fn resolve_any_immediate(op: &Operand, sym_table: &SymbolTable) -> Result<i32, S
         Operand::Immediate(val) => Ok(*val),
 
         // For example in addi x1, x2, symbol
-        Operand::Label(name) => sym_table.get_address(name)
+        Operand::Label(name) => sym_table
+            .get_address(name)
             .map(|addr| addr as i32)
             .ok_or_else(|| format!("Unknown label '{}'", name)),
 
@@ -390,8 +463,13 @@ fn resolve_any_immediate(op: &Operand, sym_table: &SymbolTable) -> Result<i32, S
     }
 }
 
-fn resolve_modifier(kind: &ModifierKind, name: &str, sym_table: &SymbolTable) -> Result<i32, String> {
-    let addr = sym_table.get_address(name)
+fn resolve_modifier(
+    kind: &ModifierKind,
+    name: &str,
+    sym_table: &SymbolTable,
+) -> Result<i32, String> {
+    let addr = sym_table
+        .get_address(name)
         .ok_or_else(|| format!("Unknown label '{}'", name))?;
 
     match kind {
@@ -400,59 +478,72 @@ fn resolve_modifier(kind: &ModifierKind, name: &str, sym_table: &SymbolTable) ->
             // 0x800 is the offset to make the address positive and sign-extend it to 32 bits
             Ok(((addr as i64 + 0x800) >> 12) as i32)
         }
-        ModifierKind::Lo => {
-            Ok(((addr << 20) as i32) >> 20)
-        }
+        ModifierKind::Lo => Ok(((addr << 20) as i32) >> 20),
     }
 }
 
-fn encode_b_type(opcode: u8, funct3: u8, ops: &[Operand], sym_table: &SymbolTable, current_pc: u32) -> Result<u32, String> {
+fn encode_b_type(
+    opcode: u8,
+    funct3: u8,
+    ops: &[Operand],
+    sym_table: &SymbolTable,
+    current_pc: u32,
+) -> Result<u32, String> {
     if let [Operand::Register(rs1), Operand::Register(rs2), Operand::Label(label)] = ops {
-        let label_addr = sym_table.get_address(label)
-                .ok_or_else(|| format!("Unknown label '{}'", label))?;
+        let label_addr = sym_table
+            .get_address(label)
+            .ok_or_else(|| format!("Unknown label '{}'", label))?;
         let offset = (label_addr as i32) - (current_pc as i32);
         if offset < -4096 || offset > 4094 {
             return Err(format!("Branch target offset {} out of range", offset));
         }
         if offset % 2 != 0 {
-            return Err(format!("Branch target offset {} must be a multiple of 2", offset));
+            return Err(format!(
+                "Branch target offset {} must be a multiple of 2",
+                offset
+            ));
         }
 
         let imm = offset as u32;
-        let b12    = (imm >> 12) & 0x1;
-        let b11    = (imm >> 11) & 0x1;
-        let b10_5  = (imm >> 5)  & 0x3F;
-        let b4_1   = (imm >> 1)  & 0xF;
+        let b12 = (imm >> 12) & 0x1;
+        let b11 = (imm >> 11) & 0x1;
+        let b10_5 = (imm >> 5) & 0x3F;
+        let b4_1 = (imm >> 1) & 0xF;
 
-        let instruction = (b12 << 31)   |
-                          (b10_5 << 25) |
-                          ((*rs2 as u32) << 20) |
-                          ((*rs1 as u32) << 15) |
-                          ((funct3 as u32) << 12) |
-                          (b4_1 << 8)   |
-                          (b11 << 7)    |
-                          (opcode as u32);
+        let instruction = (b12 << 31)
+            | (b10_5 << 25)
+            | ((*rs2 as u32) << 20)
+            | ((*rs1 as u32) << 15)
+            | ((funct3 as u32) << 12)
+            | (b4_1 << 8)
+            | (b11 << 7)
+            | (opcode as u32);
 
         Ok(instruction)
     } else {
-        Err("Invalid operands for B-type instruction: expected register, register, label".to_string())
+        Err(
+            "Invalid operands for B-type instruction: expected register, register, label"
+                .to_string(),
+        )
     }
 }
 
-fn encode_u_type(
-    opcode: u8,
-    ops: &[Operand],
-    sym_table: &SymbolTable,
-) -> Result<u32, String> {
+fn encode_u_type(opcode: u8, ops: &[Operand], sym_table: &SymbolTable) -> Result<u32, String> {
     if let [Operand::Register(rd), imm_op] = ops {
         let val = resolve_any_immediate(imm_op, sym_table)?;
         if val as u32 > 0xFFFFF {
-            return Err(format!("Immediate value {} out of range for 20-bit U-type field (0..=0xFFFFF)", val));
+            return Err(format!(
+                "Immediate value {} out of range for 20-bit U-type field (0..=0xFFFFF)",
+                val
+            ));
         }
         let imm_u32 = val as u32;
         Ok((imm_u32 << 12) | ((*rd as u32) << 7) | (opcode as u32))
     } else {
-        Err("Invalid operands for U-type instruction: expected register, immediate/label".to_string())
+        Err(
+            "Invalid operands for U-type instruction: expected register, immediate/label"
+                .to_string(),
+        )
     }
 }
 
@@ -460,7 +551,7 @@ fn encode_j_type(
     opcode: u8,
     ops: &[Operand],
     sym_table: &SymbolTable,
-    current_pc: u32
+    current_pc: u32,
 ) -> Result<u32, String> {
     if let [Operand::Register(rd), imm_op] = ops {
         let val = resolve_any_immediate(imm_op, sym_table)?;
@@ -475,15 +566,18 @@ fn encode_j_type(
         let imm_11 = (offset >> 11) & 0x1;
         let imm_19_12 = (offset >> 12) & 0xFF;
 
-        let instruction = ((imm_20 as u32) << 31)   |
-                          ((imm_19_12 as u32) << 12) |
-                          ((imm_11 as u32) << 20)   |
-                          ((imm_10_1 as u32) << 21) |
-                          ((*rd as u32) << 7) |
-                          (opcode as u32);
+        let instruction = ((imm_20 as u32) << 31)
+            | ((imm_19_12 as u32) << 12)
+            | ((imm_11 as u32) << 20)
+            | ((imm_10_1 as u32) << 21)
+            | ((*rd as u32) << 7)
+            | (opcode as u32);
         Ok(instruction)
     } else {
-        Err("Invalid operands for J-type instruction: expected register, immediate/label".to_string())
+        Err(
+            "Invalid operands for J-type instruction: expected register, immediate/label"
+                .to_string(),
+        )
     }
 }
 
@@ -508,7 +602,10 @@ fn emit_data_bytes(kind: &DirectiveKind, ops: &[Operand]) -> Result<Vec<u8>, Str
                 match op {
                     Operand::Immediate(val) => {
                         if *val < -32768 || *val > 65535 {
-                            return Err(format!(".half value {} out of range (-32768..=65535)", val));
+                            return Err(format!(
+                                ".half value {} out of range (-32768..=65535)",
+                                val
+                            ));
                         }
                         bytes.extend_from_slice(&(*val as u16).to_le_bytes());
                     }
@@ -519,7 +616,9 @@ fn emit_data_bytes(kind: &DirectiveKind, ops: &[Operand]) -> Result<Vec<u8>, Str
         DirectiveKind::Word => {
             for op in ops {
                 match op {
-                    Operand::Immediate(val) => bytes.extend_from_slice(&(*val as u32).to_le_bytes()),
+                    Operand::Immediate(val) => {
+                        bytes.extend_from_slice(&(*val as u32).to_le_bytes())
+                    }
                     _ => return Err("Invalid operand for .word: expected immediate".to_string()),
                 }
             }
@@ -528,7 +627,11 @@ fn emit_data_bytes(kind: &DirectiveKind, ops: &[Operand]) -> Result<Vec<u8>, Str
             for op in ops {
                 match op {
                     Operand::StringLiteral(s) => bytes.extend_from_slice(s.as_bytes()),
-                    _ => return Err("Invalid operand for .ascii: expected string literal".to_string()),
+                    _ => {
+                        return Err(
+                            "Invalid operand for .ascii: expected string literal".to_string()
+                        )
+                    }
                 }
             }
         }
@@ -539,7 +642,11 @@ fn emit_data_bytes(kind: &DirectiveKind, ops: &[Operand]) -> Result<Vec<u8>, Str
                         bytes.extend_from_slice(s.as_bytes());
                         bytes.push(0);
                     }
-                    _ => return Err("Invalid operand for .asciz: expected string literal".to_string()),
+                    _ => {
+                        return Err(
+                            "Invalid operand for .asciz: expected string literal".to_string()
+                        )
+                    }
                 }
             }
         }
@@ -555,8 +662,11 @@ fn emit_data_bytes(kind: &DirectiveKind, ops: &[Operand]) -> Result<Vec<u8>, Str
         }
         DirectiveKind::Unknown(name) => return Err(format!("Unsupported directive '{}'", name)),
         // Section switches, alignment, and no-ops are handled before emit_data_bytes is called.
-        DirectiveKind::Text | DirectiveKind::Data | DirectiveKind::Align
-        | DirectiveKind::Balign | DirectiveKind::Globl => unreachable!(),
+        DirectiveKind::Text
+        | DirectiveKind::Data
+        | DirectiveKind::Align
+        | DirectiveKind::Balign
+        | DirectiveKind::Globl => unreachable!(),
     }
     Ok(bytes)
 }
@@ -578,11 +688,14 @@ mod tests {
         let (assembler, sym_table) = setup();
         let statements = vec![
             Statement {
-                kind: StatementKind::Instruction("add".to_string(), vec![
-                    Operand::Register(1),
-                    Operand::Register(2),
-                    Operand::Register(3),
-                ]),
+                kind: StatementKind::Instruction(
+                    "add".to_string(),
+                    vec![
+                        Operand::Register(1),
+                        Operand::Register(2),
+                        Operand::Register(3),
+                    ],
+                ),
                 line: 1,
             },
             Statement {
@@ -590,13 +703,13 @@ mod tests {
                 line: 2,
             },
             Statement {
-                kind: StatementKind::Directive(DirectiveKind::Word, vec![
-                    Operand::Immediate(42),
-                ]),
+                kind: StatementKind::Directive(DirectiveKind::Word, vec![Operand::Immediate(42)]),
                 line: 3,
             },
         ];
-        let program = assembler.assemble(&statements, &sym_table).expect("Assembly should succeed");
+        let program = assembler
+            .assemble(&statements, &sym_table)
+            .expect("Assembly should succeed");
         assert_eq!(program.text_bin.len(), 4);
         assert_eq!(program.data_bin.len(), 4);
 
@@ -615,16 +728,17 @@ mod tests {
     #[test]
     fn test_unsupported_instruction() {
         let (assembler, sym_table) = setup();
-        let statements = vec![
-            Statement {
-                kind: StatementKind::Instruction("mul".to_string(), vec![
+        let statements = vec![Statement {
+            kind: StatementKind::Instruction(
+                "mul".to_string(),
+                vec![
                     Operand::Register(1),
                     Operand::Register(2),
                     Operand::Register(3),
-                ]),
-                line: 5,
-            },
-        ];
+                ],
+            ),
+            line: 5,
+        }];
 
         let result = assembler.assemble(&statements, &sym_table);
         assert!(result.is_err());
@@ -637,11 +751,48 @@ mod tests {
     #[test]
     fn test_invalid_operands() {
         let cases: Vec<(&str, Vec<Operand>, usize, &str)> = vec![
-            ("add", vec![Operand::Register(1), Operand::Register(2), Operand::Immediate(5)],    10, "Invalid operands for R-type"),
-            ("lw",  vec![Operand::Register(1), Operand::Register(2), Operand::Register(3)],     15, "Invalid operands for I-type"),
-            ("sw",  vec![Operand::Register(1), Operand::Register(2)],                            20, "Invalid operands for S-type"),
-            ("beq", vec![Operand::Register(1), Operand::Immediate(5), Operand::Immediate(100)], 25, "Invalid operands for B-type"),
-            ("jal", vec![Operand::Immediate(100)],                                              30, "Invalid operands for J-type"),
+            (
+                "add",
+                vec![
+                    Operand::Register(1),
+                    Operand::Register(2),
+                    Operand::Immediate(5),
+                ],
+                10,
+                "Invalid operands for R-type",
+            ),
+            (
+                "lw",
+                vec![
+                    Operand::Register(1),
+                    Operand::Register(2),
+                    Operand::Register(3),
+                ],
+                15,
+                "Invalid operands for I-type",
+            ),
+            (
+                "sw",
+                vec![Operand::Register(1), Operand::Register(2)],
+                20,
+                "Invalid operands for S-type",
+            ),
+            (
+                "beq",
+                vec![
+                    Operand::Register(1),
+                    Operand::Immediate(5),
+                    Operand::Immediate(100),
+                ],
+                25,
+                "Invalid operands for B-type",
+            ),
+            (
+                "jal",
+                vec![Operand::Immediate(100)],
+                30,
+                "Invalid operands for J-type",
+            ),
         ];
         for (mnemonic, ops, line, msg) in cases {
             let (assembler, sym_table) = setup();
@@ -654,21 +805,25 @@ mod tests {
             let errors = result.unwrap_err();
             assert_eq!(errors.len(), 1, "For '{}'", mnemonic);
             assert_eq!(errors[0].line, line, "For '{}'", mnemonic);
-            assert!(errors[0].message.contains(msg), "For '{}': got '{}'", mnemonic, errors[0].message);
+            assert!(
+                errors[0].message.contains(msg),
+                "For '{}': got '{}'",
+                mnemonic,
+                errors[0].message
+            );
         }
     }
 
     #[test]
     fn test_unsupported_directive() {
         let (assembler, sym_table) = setup();
-        let statements = vec![
-            Statement {
-                kind: StatementKind::Directive(DirectiveKind::Unknown(".float".to_string()), vec![
-                    Operand::Immediate(42),
-                ]),
-                line: 35,
-            },
-        ];
+        let statements = vec![Statement {
+            kind: StatementKind::Directive(
+                DirectiveKind::Unknown(".float".to_string()),
+                vec![Operand::Immediate(42)],
+            ),
+            line: 35,
+        }];
 
         let result = assembler.assemble(&statements, &sym_table);
         assert!(result.is_err());
@@ -688,7 +843,9 @@ mod tests {
         let asm = Assembler::new(0, 0);
         let program = asm.assemble(&stmts, &sym_table).expect("should assemble");
 
-        let words: Vec<u32> = program.text_bin.chunks(4)
+        let words: Vec<u32> = program
+            .text_bin
+            .chunks(4)
             .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
             .collect();
 
@@ -707,9 +864,13 @@ mod tests {
         let expanded = crate::pseudo::expand(stmts).unwrap();
         let sym_table = crate::symbols::SymbolTable::new(0, 0);
         let asm = Assembler::new(0, 0);
-        let program = asm.assemble(&expanded, &sym_table).expect("should assemble");
+        let program = asm
+            .assemble(&expanded, &sym_table)
+            .expect("should assemble");
 
-        let words: Vec<u32> = program.text_bin.chunks(4)
+        let words: Vec<u32> = program
+            .text_bin
+            .chunks(4)
             .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
             .collect();
 
@@ -731,9 +892,13 @@ mod tests {
         let expanded = crate::pseudo::expand(stmts).unwrap();
         let sym_table = crate::symbols::SymbolTable::new(0, 0);
         let asm = Assembler::new(0, 0);
-        let program = asm.assemble(&expanded, &sym_table).expect("should assemble");
+        let program = asm
+            .assemble(&expanded, &sym_table)
+            .expect("should assemble");
 
-        let words: Vec<u32> = program.text_bin.chunks(4)
+        let words: Vec<u32> = program
+            .text_bin
+            .chunks(4)
             .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
             .collect();
 
@@ -754,9 +919,13 @@ mod tests {
         let expanded = crate::pseudo::expand(stmts).unwrap();
         let sym_table = crate::symbols::SymbolTable::new(0, 0);
         let asm = Assembler::new(0, 0);
-        let program = asm.assemble(&expanded, &sym_table).expect("should assemble");
+        let program = asm
+            .assemble(&expanded, &sym_table)
+            .expect("should assemble");
 
-        let words: Vec<u32> = program.text_bin.chunks(4)
+        let words: Vec<u32> = program
+            .text_bin
+            .chunks(4)
             .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
             .collect();
 
@@ -773,14 +942,15 @@ mod tests {
     #[test]
     fn test_invalid_directive_operands() {
         let (assembler, sym_table) = setup();
-        let statements = vec![
-            Statement {
-                kind: StatementKind::Directive(DirectiveKind::Word, vec![
+        let statements = vec![Statement {
+            kind: StatementKind::Directive(
+                DirectiveKind::Word,
+                vec![
                     Operand::Register(1), // Should be immediate
-                ]),
-                line: 40,
-            },
-        ];
+                ],
+            ),
+            line: 40,
+        }];
 
         let result = assembler.assemble(&statements, &sym_table);
         assert!(result.is_err());
@@ -795,33 +965,43 @@ mod tests {
         let (assembler, sym_table) = setup();
         let statements = vec![
             Statement {
-                kind: StatementKind::Instruction("mul".to_string(), vec![
-                    Operand::Register(1),
-                    Operand::Register(2),
-                    Operand::Register(3),
-                ]),
+                kind: StatementKind::Instruction(
+                    "mul".to_string(),
+                    vec![
+                        Operand::Register(1),
+                        Operand::Register(2),
+                        Operand::Register(3),
+                    ],
+                ),
                 line: 1,
             },
             Statement {
-                kind: StatementKind::Instruction("add".to_string(), vec![
-                    Operand::Register(1),
-                    Operand::Register(2),
-                    Operand::Register(3),
-                ]),
+                kind: StatementKind::Instruction(
+                    "add".to_string(),
+                    vec![
+                        Operand::Register(1),
+                        Operand::Register(2),
+                        Operand::Register(3),
+                    ],
+                ),
                 line: 2,
             },
             Statement {
-                kind: StatementKind::Instruction("div".to_string(), vec![
-                    Operand::Register(4),
-                    Operand::Register(5),
-                    Operand::Register(6),
-                ]),
+                kind: StatementKind::Instruction(
+                    "div".to_string(),
+                    vec![
+                        Operand::Register(4),
+                        Operand::Register(5),
+                        Operand::Register(6),
+                    ],
+                ),
                 line: 3,
             },
             Statement {
-                kind: StatementKind::Directive(DirectiveKind::Unknown(".float".to_string()), vec![
-                    Operand::Immediate(42),
-                ]),
+                kind: StatementKind::Directive(
+                    DirectiveKind::Unknown(".float".to_string()),
+                    vec![Operand::Immediate(42)],
+                ),
                 line: 4,
             },
         ];
@@ -845,80 +1025,107 @@ mod tests {
         let mut sym_table = SymbolTable::new(0, 0);
 
         // my_label at 0x12800 (bit 11 is 1)
-        sym_table.add_label("my_label".to_string(), 0x12800).unwrap();
+        sym_table
+            .add_label("my_label".to_string(), 0x12800)
+            .unwrap();
 
         let statements = vec![
             Statement {
-                kind: StatementKind::Instruction("lui".to_string(), vec![
-                    Operand::Register(1),
-                    Operand::Modifier(ModifierKind::Hi, "my_label".to_string()),
-                ]),
+                kind: StatementKind::Instruction(
+                    "lui".to_string(),
+                    vec![
+                        Operand::Register(1),
+                        Operand::Modifier(ModifierKind::Hi, "my_label".to_string()),
+                    ],
+                ),
                 line: 1,
             },
             Statement {
-                kind: StatementKind::Instruction("addi".to_string(), vec![
-                    Operand::Register(1),
-                    Operand::Register(1),
-                    Operand::Modifier(ModifierKind::Lo, "my_label".to_string()),
-                ]),
+                kind: StatementKind::Instruction(
+                    "addi".to_string(),
+                    vec![
+                        Operand::Register(1),
+                        Operand::Register(1),
+                        Operand::Modifier(ModifierKind::Lo, "my_label".to_string()),
+                    ],
+                ),
                 line: 2,
             },
             Statement {
-                kind: StatementKind::Instruction("lw".to_string(), vec![
-                    Operand::Register(2),
-                    Operand::Memory {
-                        offset: MemoryOffset::Modifier(ModifierKind::Lo, "my_label".to_string()),
-                        reg: 1,
-                    },
-                ]),
+                kind: StatementKind::Instruction(
+                    "lw".to_string(),
+                    vec![
+                        Operand::Register(2),
+                        Operand::Memory {
+                            offset: MemoryOffset::Modifier(
+                                ModifierKind::Lo,
+                                "my_label".to_string(),
+                            ),
+                            reg: 1,
+                        },
+                    ],
+                ),
                 line: 3,
             },
         ];
 
-        let program = assembler.assemble(&statements, &sym_table).expect("Assembly should succeed");
+        let program = assembler
+            .assemble(&statements, &sym_table)
+            .expect("Assembly should succeed");
 
         // LUI x1, %hi(0x12800) -> %hi = (0x12800 + 0x800) >> 12 = 0x13
         // Result: 0x000130B7
-        assert_eq!(u32::from_le_bytes(program.text_bin[0..4].try_into().unwrap()), 0x000130B7);
+        assert_eq!(
+            u32::from_le_bytes(program.text_bin[0..4].try_into().unwrap()),
+            0x000130B7
+        );
 
         // ADDI x1, x1, %lo(0x12800) -> %lo = 0x12800 & 0xFFF = 0x800 (signed -2048)
         // Result: 0x80008093
-        assert_eq!(u32::from_le_bytes(program.text_bin[4..8].try_into().unwrap()), 0x80008093);
+        assert_eq!(
+            u32::from_le_bytes(program.text_bin[4..8].try_into().unwrap()),
+            0x80008093
+        );
 
         // LW x2, %lo(0x12800)(x1) -> %lo = 0x800
         // I-type: imm[11:0]=0x800, rs1=1, funct3=010, rd=2, opcode=0000011
         // 0x80000000 | 0x8000 | 0x2000 | 0x100 | 0x03
-        assert_eq!(u32::from_le_bytes(program.text_bin[8..12].try_into().unwrap()), 0x8000A103);
+        assert_eq!(
+            u32::from_le_bytes(program.text_bin[8..12].try_into().unwrap()),
+            0x8000A103
+        );
     }
 
     #[test]
     fn test_assemble_i_type_instruction() {
         let (assembler, sym_table) = setup();
-        let statements = vec![
-            Statement {
-                kind: StatementKind::Instruction("addi".to_string(), vec![
+        let statements = vec![Statement {
+            kind: StatementKind::Instruction(
+                "addi".to_string(),
+                vec![
                     Operand::Register(19),
                     Operand::Register(20),
                     Operand::Immediate(8),
-                ]),
-                line: 1,
-            },
-        ];
+                ],
+            ),
+            line: 1,
+        }];
 
-        let instructions = assembler.assemble(&statements, &sym_table).expect("should assemble").text_bin;
+        let instructions = assembler
+            .assemble(&statements, &sym_table)
+            .expect("should assemble")
+            .text_bin;
         assert_eq!(instructions.len(), 4);
         assert_eq!(
             instructions[0..4],
             vec![
                 // Byte 0: rd[0] (1) + opcode (0010011)
-                0b10010011,
-                // Byte 1: rs1[0] (0) + funct3 (000) + rd[4:1] (1001)
-                0b00001001,
-                // Byte 2: imm[3:0] (1000) + rs1[4:1] (1010)
-                0b10001010,
-                // Byte 3: imm[11:4] (00000000)
+                0b10010011, // Byte 1: rs1[0] (0) + funct3 (000) + rd[4:1] (1001)
+                0b00001001, // Byte 2: imm[3:0] (1000) + rs1[4:1] (1010)
+                0b10001010, // Byte 3: imm[11:4] (00000000)
                 0b00000000,
-        ]);
+            ]
+        );
     }
 
     #[test]
@@ -926,48 +1133,51 @@ mod tests {
         // addi x19, x20, -8: bytes 0-2 are identical to the +8 case because the
         // low 4 bits of ±8 are the same (1000); only byte 3 (imm[11:4]) differs.
         let (assembler, sym_table) = setup();
-        let statements = vec![
-            Statement {
-                kind: StatementKind::Instruction("addi".to_string(), vec![
+        let statements = vec![Statement {
+            kind: StatementKind::Instruction(
+                "addi".to_string(),
+                vec![
                     Operand::Register(19),
                     Operand::Register(20),
                     Operand::Immediate(-8),
-                ]),
-                line: 1,
-            },
-        ];
+                ],
+            ),
+            line: 1,
+        }];
 
-        let instructions = assembler.assemble(&statements, &sym_table).expect("should assemble").text_bin;
+        let instructions = assembler
+            .assemble(&statements, &sym_table)
+            .expect("should assemble")
+            .text_bin;
         assert_eq!(instructions.len(), 4);
         assert_eq!(
             instructions[0..4],
             vec![
                 // Byte 0: rd[0] (1) + opcode (0010011)
-                0b10010011,
-                // Byte 1: rs1[0] (0) + funct3 (000) + rd[4:1] (1001)
-                0b00001001,
-                // Byte 2: imm[3:0] (1000) + rs1[4:1] (1010)
-                0b10001010,
-                // Byte 3: imm[11:4] (00000000)
+                0b10010011, // Byte 1: rs1[0] (0) + funct3 (000) + rd[4:1] (1001)
+                0b00001001, // Byte 2: imm[3:0] (1000) + rs1[4:1] (1010)
+                0b10001010, // Byte 3: imm[11:4] (00000000)
                 0b11111111,
-        ]);
+            ]
+        );
     }
 
     #[test]
     fn test_s_instruction_with_unknown_label() {
         let (assembler, sym_table) = setup();
-        let statements = vec![
-            Statement {
-                kind: StatementKind::Instruction("sw".to_string(), vec![
+        let statements = vec![Statement {
+            kind: StatementKind::Instruction(
+                "sw".to_string(),
+                vec![
                     Operand::Register(19),
                     Operand::Memory {
                         offset: MemoryOffset::Label("unknown".to_string()),
-                        reg: 0
+                        reg: 0,
                     },
-                ]),
-                line: 1,
-            },
-        ];
+                ],
+            ),
+            line: 1,
+        }];
 
         let result = assembler.assemble(&statements, &sym_table);
         assert!(result.is_err());
@@ -980,18 +1190,22 @@ mod tests {
     #[test]
     fn test_encoding_of_i_shift_instruction() {
         let (assembler, sym_table) = setup();
-        let statements = vec![
-            Statement {
-                kind: StatementKind::Instruction("srai".to_string(), vec![
+        let statements = vec![Statement {
+            kind: StatementKind::Instruction(
+                "srai".to_string(),
+                vec![
                     Operand::Register(10),
                     Operand::Register(11),
                     Operand::Immediate(4),
-                ]),
-                line: 1,
-            },
-        ];
+                ],
+            ),
+            line: 1,
+        }];
 
-        let instructions = assembler.assemble(&statements, &sym_table).expect("should assemble").text_bin;
+        let instructions = assembler
+            .assemble(&statements, &sym_table)
+            .expect("should assemble")
+            .text_bin;
         assert_eq!(instructions.len(), 4);
         // srai x10, x11, 4
         // opcode=0x13, rd=10, funct3=0x5, rs1=11, shamt=4, funct7=0x20
@@ -1009,19 +1223,25 @@ mod tests {
     #[test]
     fn test_encoding_of_b_type_instruction() {
         let (assembler, mut sym_table) = setup();
-        sym_table.add_label("target".to_string(), config::TEXT_BASE + 0x10).unwrap();
-        let statements = vec![
-            Statement {
-                kind: StatementKind::Instruction("beq".to_string(), vec![
+        sym_table
+            .add_label("target".to_string(), config::TEXT_BASE + 0x10)
+            .unwrap();
+        let statements = vec![Statement {
+            kind: StatementKind::Instruction(
+                "beq".to_string(),
+                vec![
                     Operand::Register(1),
                     Operand::Register(2),
                     Operand::Label("target".to_string()),
-                ]),
-                line: 1,
-            },
-        ];
+                ],
+            ),
+            line: 1,
+        }];
 
-        let instructions = assembler.assemble(&statements, &sym_table).expect("should assemble").text_bin;
+        let instructions = assembler
+            .assemble(&statements, &sym_table)
+            .expect("should assemble")
+            .text_bin;
         assert_eq!(instructions.len(), 4);
         // beq x1, x2, target (offset = target - current_pc = 0x0040_0010 - 0x0040_0000 = 16)
         // opcode=0x63, funct3=0x0, rs1=1, rs2=2, imm=16
@@ -1039,17 +1259,18 @@ mod tests {
     #[test]
     fn test_encoding_of_u_type_instruction() {
         let (assembler, sym_table) = setup();
-        let statements = vec![
-            Statement {
-                kind: StatementKind::Instruction("lui".to_string(), vec![
-                    Operand::Register(5),
-                    Operand::Immediate(0xF1),
-                ]),
-                line: 1,
-            },
-        ];
+        let statements = vec![Statement {
+            kind: StatementKind::Instruction(
+                "lui".to_string(),
+                vec![Operand::Register(5), Operand::Immediate(0xF1)],
+            ),
+            line: 1,
+        }];
 
-        let instructions = assembler.assemble(&statements, &sym_table).expect("should assemble").text_bin;
+        let instructions = assembler
+            .assemble(&statements, &sym_table)
+            .expect("should assemble")
+            .text_bin;
         assert_eq!(instructions.len(), 4);
         // lui x5, 0x12345
         // opcode=0x37, rd=5, imm=0xF1
@@ -1081,7 +1302,9 @@ mod tests {
         let statements = parser.parse().unwrap();
         sym_table.build(&statements).unwrap();
 
-        let program = assembler.assemble(&statements, &sym_table).expect("Assembly should succeed");
+        let program = assembler
+            .assemble(&statements, &sym_table)
+            .expect("Assembly should succeed");
 
         assert_eq!(program.data_bin.len(), 24);
         assert_eq!(program.data_bin[0..3], [1, 2, 3]);
@@ -1096,11 +1319,14 @@ mod tests {
     fn test_i_type_immediate_overflow() {
         let (assembler, sym_table) = setup();
         let stmts = vec![Statement {
-            kind: StatementKind::Instruction("addi".to_string(), vec![
-                Operand::Register(1),
-                Operand::Register(2),
-                Operand::Immediate(2048), // one past the 12-bit signed max
-            ]),
+            kind: StatementKind::Instruction(
+                "addi".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Register(2),
+                    Operand::Immediate(2048), // one past the 12-bit signed max
+                ],
+            ),
             line: 1,
         }];
         let result = assembler.assemble(&stmts, &sym_table);
@@ -1114,27 +1340,35 @@ mod tests {
     fn test_u_type_immediate_overflow() {
         let (assembler, sym_table) = setup();
         let stmts = vec![Statement {
-            kind: StatementKind::Instruction("lui".to_string(), vec![
-                Operand::Register(1),
-                Operand::Immediate(0x100000), // one past the 20-bit max
-            ]),
+            kind: StatementKind::Instruction(
+                "lui".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Immediate(0x100000), // one past the 20-bit max
+                ],
+            ),
             line: 1,
         }];
         let result = assembler.assemble(&stmts, &sym_table);
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert_eq!(errors.len(), 1);
-        assert!(errors[0].message.contains("out of range for 20-bit U-type field"));
+        assert!(errors[0]
+            .message
+            .contains("out of range for 20-bit U-type field"));
     }
 
     #[test]
     fn test_u_type_immediate_max_valid() {
         let (assembler, sym_table) = setup();
         let stmts = vec![Statement {
-            kind: StatementKind::Instruction("lui".to_string(), vec![
-                Operand::Register(1),
-                Operand::Immediate(0xFFFFF), // exactly 20-bit max
-            ]),
+            kind: StatementKind::Instruction(
+                "lui".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Immediate(0xFFFFF), // exactly 20-bit max
+                ],
+            ),
             line: 1,
         }];
         assert!(assembler.assemble(&stmts, &sym_table).is_ok());
@@ -1144,48 +1378,63 @@ mod tests {
     fn test_byte_directive_overflow() {
         let (assembler, sym_table) = setup();
         let stmts = vec![Statement {
-            kind: StatementKind::Directive(DirectiveKind::Byte, vec![
-                Operand::Immediate(256), // one past unsigned byte max
-            ]),
+            kind: StatementKind::Directive(
+                DirectiveKind::Byte,
+                vec![
+                    Operand::Immediate(256), // one past unsigned byte max
+                ],
+            ),
             line: 1,
         }];
         let result = assembler.assemble(&stmts, &sym_table);
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert_eq!(errors.len(), 1);
-        assert!(errors[0].message.contains(".byte value") && errors[0].message.contains("out of range"));
+        assert!(
+            errors[0].message.contains(".byte value") && errors[0].message.contains("out of range")
+        );
     }
 
     #[test]
     fn test_byte_directive_negative_underflow() {
         let (assembler, sym_table) = setup();
         let stmts = vec![Statement {
-            kind: StatementKind::Directive(DirectiveKind::Byte, vec![
-                Operand::Immediate(-129), // one past signed byte min
-            ]),
+            kind: StatementKind::Directive(
+                DirectiveKind::Byte,
+                vec![
+                    Operand::Immediate(-129), // one past signed byte min
+                ],
+            ),
             line: 1,
         }];
         let result = assembler.assemble(&stmts, &sym_table);
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert_eq!(errors.len(), 1);
-        assert!(errors[0].message.contains(".byte value") && errors[0].message.contains("out of range"));
+        assert!(
+            errors[0].message.contains(".byte value") && errors[0].message.contains("out of range")
+        );
     }
 
     #[test]
     fn test_half_directive_overflow() {
         let (assembler, sym_table) = setup();
         let stmts = vec![Statement {
-            kind: StatementKind::Directive(DirectiveKind::Half, vec![
-                Operand::Immediate(65536), // one past unsigned halfword max
-            ]),
+            kind: StatementKind::Directive(
+                DirectiveKind::Half,
+                vec![
+                    Operand::Immediate(65536), // one past unsigned halfword max
+                ],
+            ),
             line: 1,
         }];
         let result = assembler.assemble(&stmts, &sym_table);
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert_eq!(errors.len(), 1);
-        assert!(errors[0].message.contains(".half value") && errors[0].message.contains("out of range"));
+        assert!(
+            errors[0].message.contains(".half value") && errors[0].message.contains("out of range")
+        );
     }
 
     #[test]
@@ -1229,7 +1478,9 @@ mod tests {
         let mut sym_table = crate::symbols::SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
         sym_table.build(&stmts).unwrap();
         let asm = Assembler::new(config::TEXT_BASE, config::DATA_BASE);
-        let program = asm.assemble(&stmts, &sym_table).expect(".globl should not cause an error");
+        let program = asm
+            .assemble(&stmts, &sym_table)
+            .expect(".globl should not cause an error");
         assert_eq!(program.text_bin.len(), 4); // only the addi
     }
 

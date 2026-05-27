@@ -1,6 +1,6 @@
-use std::io::Write;
 use crate::elf_loader;
 use crate::processor::{Processor, StepError};
+use std::io::Write;
 
 pub const DEFAULT_MAX_STEPS: u64 = 100_000_000;
 

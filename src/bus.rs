@@ -69,17 +69,19 @@ fn read_bytes(data: &[u8], addr: u32, size: AccessSize) -> Result<u32, MemoryFau
         AccessSize::Byte => data
             .get(addr)
             .map(|&b| b as u32)
-            .ok_or(MemoryFault::OutOfBounds { address: addr as u32 }),
+            .ok_or(MemoryFault::OutOfBounds {
+                address: addr as u32,
+            }),
         AccessSize::Half => {
-            let bytes = data
-                .get(addr..addr + 2)
-                .ok_or(MemoryFault::OutOfBounds { address: addr as u32 })?;
+            let bytes = data.get(addr..addr + 2).ok_or(MemoryFault::OutOfBounds {
+                address: addr as u32,
+            })?;
             Ok(u32::from_le_bytes([bytes[0], bytes[1], 0, 0]))
         }
         AccessSize::Word => {
-            let bytes = data
-                .get(addr..addr + 4)
-                .ok_or(MemoryFault::OutOfBounds { address: addr as u32 })?;
+            let bytes = data.get(addr..addr + 4).ok_or(MemoryFault::OutOfBounds {
+                address: addr as u32,
+            })?;
             Ok(u32::from_le_bytes(bytes.try_into().unwrap()))
         }
     }
@@ -111,9 +113,12 @@ impl Device for Ram {
             AccessSize::Half => 2,
             AccessSize::Word => 4,
         };
-        let slot = self.data
+        let slot = self
+            .data
             .get_mut(addr..addr + n)
-            .ok_or(MemoryFault::OutOfBounds { address: addr as u32 })?;
+            .ok_or(MemoryFault::OutOfBounds {
+                address: addr as u32,
+            })?;
         slot.copy_from_slice(&bytes[..n]);
         Ok(())
     }

@@ -6,8 +6,8 @@ pub struct ElfSegment {
     /// Physical/load address — may differ from vaddr for data segments in
     /// ROM→RAM layouts. Startup code reads from paddr and copies to vaddr.
     pub paddr: u32,
-    pub data: Vec<u8>,  // zero-padded to p_memsz
-    pub filesz: usize,  // bytes present in the file (< data.len() for .bss)
+    pub data: Vec<u8>, // zero-padded to p_memsz
+    pub filesz: usize, // bytes present in the file (< data.len() for .bss)
 }
 
 #[derive(Debug)]
@@ -52,7 +52,12 @@ pub fn load(bytes: &[u8]) -> Result<ElfImage, ElfError> {
             if ph.p_memsz > ph.p_filesz {
                 data.resize(ph.p_memsz as usize, 0);
             }
-            ElfSegment { vaddr: ph.p_vaddr as u32, paddr: ph.p_paddr as u32, data, filesz }
+            ElfSegment {
+                vaddr: ph.p_vaddr as u32,
+                paddr: ph.p_paddr as u32,
+                data,
+                filesz,
+            }
         })
         .collect();
 
@@ -68,7 +73,11 @@ pub fn load(bytes: &[u8]) -> Result<ElfImage, ElfError> {
         })
         .map(|sym| sym.st_value as u32);
 
-    Ok(ElfImage { segments, entry_point, tohost_addr })
+    Ok(ElfImage {
+        segments,
+        entry_point,
+        tohost_addr,
+    })
 }
 
 #[cfg(test)]

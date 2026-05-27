@@ -92,12 +92,15 @@ fn expand_statement(statement: Statement) -> Result<Vec<Statement>, String> {
         if *mnemonic == name.as_str() {
             return match expansion {
                 Fixed { base, arity, out } => apply_fixed(&name, base, *arity, out, ops, line),
-                Custom(f)                  => f(&name, ops, line),
+                Custom(f) => f(&name, ops, line),
             };
         }
     }
 
-    Ok(vec![Statement { kind: StatementKind::Instruction(name, ops), line }])
+    Ok(vec![Statement {
+        kind: StatementKind::Instruction(name, ops),
+        line,
+    }])
 }
 
 fn apply_fixed(
@@ -111,22 +114,35 @@ fn apply_fixed(
     if ops.len() != arity {
         return Err(format!(
             "Invalid number of operands for '{}' pseudo-instruction. Expected {}, got {}",
-            name, arity, ops.len()
+            name,
+            arity,
+            ops.len()
         ));
     }
-    let built = out_ops.iter().map(|o| match o {
-        In(i)  => ops[*i].clone(),
-        Reg(n) => Operand::Register(*n),
-        Imm(v) => Operand::Immediate(*v),
-    }).collect();
-    Ok(vec![Statement { kind: StatementKind::Instruction(base.to_string(), built), line }])
+    let built = out_ops
+        .iter()
+        .map(|o| match o {
+            In(i) => ops[*i].clone(),
+            Reg(n) => Operand::Register(*n),
+            Imm(v) => Operand::Immediate(*v),
+        })
+        .collect();
+    Ok(vec![Statement {
+        kind: StatementKind::Instruction(base.to_string(), built),
+        line,
+    }])
 }
 
 // --- Custom expanders ---
 
 fn take_ops<const N: usize>(name: &str, ops: Vec<Operand>) -> Result<[Operand; N], String> {
     ops.try_into().map_err(|v: Vec<_>| {
-        format!("Invalid number of operands for '{}' pseudo-instruction. Expected {}, got {}", name, N, v.len())
+        format!(
+            "Invalid number of operands for '{}' pseudo-instruction. Expected {}, got {}",
+            name,
+            N,
+            v.len()
+        )
     })
 }
 
@@ -134,18 +150,33 @@ fn expand_li(_name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<Statemen
     let [rd, imm_op] = take_ops::<2>("li", ops)?;
     let rd_reg = match rd {
         Operand::Register(n) => n,
-        _ => return Err(format!("Invalid first operand for 'li': expected a register, got {}", rd)),
+        _ => {
+            return Err(format!(
+                "Invalid first operand for 'li': expected a register, got {}",
+                rd
+            ))
+        }
     };
     let imm = match imm_op {
         Operand::Immediate(n) => n,
-        _ => return Err(format!("Invalid second operand for 'li': expected an immediate, got {}", imm_op)),
+        _ => {
+            return Err(format!(
+                "Invalid second operand for 'li': expected an immediate, got {}",
+                imm_op
+            ))
+        }
     };
 
     if (-2048..=2047).contains(&imm) {
         Ok(vec![Statement {
-            kind: StatementKind::Instruction("addi".to_string(), vec![
-                Operand::Register(rd_reg), Operand::Register(0), Operand::Immediate(imm),
-            ]),
+            kind: StatementKind::Instruction(
+                "addi".to_string(),
+                vec![
+                    Operand::Register(rd_reg),
+                    Operand::Register(0),
+                    Operand::Immediate(imm),
+                ],
+            ),
             line,
         }])
     } else {
@@ -153,15 +184,21 @@ fn expand_li(_name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<Statemen
         let lo12 = (imm << 20) >> 20;
         Ok(vec![
             Statement {
-                kind: StatementKind::Instruction("lui".to_string(), vec![
-                    Operand::Register(rd_reg), Operand::Immediate(hi20),
-                ]),
+                kind: StatementKind::Instruction(
+                    "lui".to_string(),
+                    vec![Operand::Register(rd_reg), Operand::Immediate(hi20)],
+                ),
                 line,
             },
             Statement {
-                kind: StatementKind::Instruction("addi".to_string(), vec![
-                    Operand::Register(rd_reg), Operand::Register(rd_reg), Operand::Immediate(lo12),
-                ]),
+                kind: StatementKind::Instruction(
+                    "addi".to_string(),
+                    vec![
+                        Operand::Register(rd_reg),
+                        Operand::Register(rd_reg),
+                        Operand::Immediate(lo12),
+                    ],
+                ),
                 line,
             },
         ])
@@ -170,26 +207,43 @@ fn expand_li(_name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<Statemen
 
 fn expand_la(_name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<Statement>, String> {
     let [rd, symbol] = take_ops::<2>("la", ops)?;
-    let rd_reg = match rd {
-        Operand::Register(n) => n,
-        _ => return Err(format!("Invalid first operand for 'la' pseudo-instruction. Expected a register, got {}", rd)),
-    };
+    let rd_reg =
+        match rd {
+            Operand::Register(n) => n,
+            _ => return Err(format!(
+                "Invalid first operand for 'la' pseudo-instruction. Expected a register, got {}",
+                rd
+            )),
+        };
     let symbol = match symbol {
         Operand::Label(s) => s,
-        _ => return Err(format!("Invalid second operand for 'la' pseudo-instruction. Expected a label, got {}", symbol)),
+        _ => {
+            return Err(format!(
+                "Invalid second operand for 'la' pseudo-instruction. Expected a label, got {}",
+                symbol
+            ))
+        }
     };
     Ok(vec![
         Statement {
-            kind: StatementKind::Instruction("auipc".to_string(), vec![
-                Operand::Register(rd_reg), Operand::Modifier(ModifierKind::Hi, symbol.clone()),
-            ]),
+            kind: StatementKind::Instruction(
+                "auipc".to_string(),
+                vec![
+                    Operand::Register(rd_reg),
+                    Operand::Modifier(ModifierKind::Hi, symbol.clone()),
+                ],
+            ),
             line,
         },
         Statement {
-            kind: StatementKind::Instruction("addi".to_string(), vec![
-                Operand::Register(rd_reg), Operand::Register(rd_reg),
-                Operand::Modifier(ModifierKind::Lo, symbol),
-            ]),
+            kind: StatementKind::Instruction(
+                "addi".to_string(),
+                vec![
+                    Operand::Register(rd_reg),
+                    Operand::Register(rd_reg),
+                    Operand::Modifier(ModifierKind::Lo, symbol),
+                ],
+            ),
             line,
         },
     ])
@@ -199,8 +253,17 @@ fn expand_call(_name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<Statem
     let [target] = take_ops::<1>("call", ops)?;
     let (hi, lo) = split_hi_lo(target, "call")?;
     Ok(vec![
-        Statement { kind: StatementKind::Instruction("auipc".to_string(), vec![Operand::Register(1), hi]),                         line },
-        Statement { kind: StatementKind::Instruction("jalr".to_string(),  vec![Operand::Register(1), Operand::Register(1), lo]),    line },
+        Statement {
+            kind: StatementKind::Instruction("auipc".to_string(), vec![Operand::Register(1), hi]),
+            line,
+        },
+        Statement {
+            kind: StatementKind::Instruction(
+                "jalr".to_string(),
+                vec![Operand::Register(1), Operand::Register(1), lo],
+            ),
+            line,
+        },
     ])
 }
 
@@ -208,35 +271,67 @@ fn expand_tail(_name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<Statem
     let [target] = take_ops::<1>("tail", ops)?;
     let (hi, lo) = split_hi_lo(target, "tail")?;
     Ok(vec![
-        Statement { kind: StatementKind::Instruction("auipc".to_string(), vec![Operand::Register(6), hi]),                         line },
-        Statement { kind: StatementKind::Instruction("jalr".to_string(),  vec![Operand::Register(0), Operand::Register(6), lo]),    line },
+        Statement {
+            kind: StatementKind::Instruction("auipc".to_string(), vec![Operand::Register(6), hi]),
+            line,
+        },
+        Statement {
+            kind: StatementKind::Instruction(
+                "jalr".to_string(),
+                vec![Operand::Register(0), Operand::Register(6), lo],
+            ),
+            line,
+        },
     ])
 }
 
 // lb/lh/lw rd, symbol  (pseudo)  →  auipc rd, %hi(symbol) + l{b|h|w} rd, %lo(symbol)(rd)
 // lb/lh/lw rd, offset(rs)        →  pass through as base instruction
-fn expand_load_pseudo(name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<Statement>, String> {
+fn expand_load_pseudo(
+    name: &str,
+    ops: Vec<Operand>,
+    line: usize,
+) -> Result<Vec<Statement>, String> {
     if ops.len() != 2 || !matches!(ops[1], Operand::Label(_)) {
-        return Ok(vec![Statement { kind: StatementKind::Instruction(name.to_string(), ops), line }]);
+        return Ok(vec![Statement {
+            kind: StatementKind::Instruction(name.to_string(), ops),
+            line,
+        }]);
     }
     let [rd, symbol] = take_ops::<2>(name, ops)?;
-    let rd_reg = match rd {
-        Operand::Register(n) => n,
-        _ => return Err(format!("Invalid first operand for '{}' pseudo-instruction. Expected a register, got {}", name, rd)),
+    let rd_reg =
+        match rd {
+            Operand::Register(n) => n,
+            _ => return Err(format!(
+                "Invalid first operand for '{}' pseudo-instruction. Expected a register, got {}",
+                name, rd
+            )),
+        };
+    let Operand::Label(symbol) = symbol else {
+        unreachable!()
     };
-    let Operand::Label(symbol) = symbol else { unreachable!() };
     Ok(vec![
         Statement {
-            kind: StatementKind::Instruction("auipc".to_string(), vec![
-                Operand::Register(rd_reg), Operand::Modifier(ModifierKind::Hi, symbol.clone()),
-            ]),
+            kind: StatementKind::Instruction(
+                "auipc".to_string(),
+                vec![
+                    Operand::Register(rd_reg),
+                    Operand::Modifier(ModifierKind::Hi, symbol.clone()),
+                ],
+            ),
             line,
         },
         Statement {
-            kind: StatementKind::Instruction(name.to_string(), vec![
-                Operand::Register(rd_reg),
-                Operand::Memory { offset: MemoryOffset::Modifier(ModifierKind::Lo, symbol), reg: rd_reg },
-            ]),
+            kind: StatementKind::Instruction(
+                name.to_string(),
+                vec![
+                    Operand::Register(rd_reg),
+                    Operand::Memory {
+                        offset: MemoryOffset::Modifier(ModifierKind::Lo, symbol),
+                        reg: rd_reg,
+                    },
+                ],
+            ),
             line,
         },
     ])
@@ -244,32 +339,59 @@ fn expand_load_pseudo(name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<
 
 // sb/sh/sw rd, symbol, rt  (pseudo)  →  auipc rt, %hi(symbol) + s{b|h|w} rd, %lo(symbol)(rt)
 // sb/sh/sw rd, offset(rs)            →  pass through as base instruction
-fn expand_store_pseudo(name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<Statement>, String> {
+fn expand_store_pseudo(
+    name: &str,
+    ops: Vec<Operand>,
+    line: usize,
+) -> Result<Vec<Statement>, String> {
     if ops.len() != 3 || !matches!(ops[1], Operand::Label(_)) {
-        return Ok(vec![Statement { kind: StatementKind::Instruction(name.to_string(), ops), line }]);
+        return Ok(vec![Statement {
+            kind: StatementKind::Instruction(name.to_string(), ops),
+            line,
+        }]);
     }
     let [rd, symbol, rt] = take_ops::<3>(name, ops)?;
-    let rd_reg = match rd {
-        Operand::Register(n) => n,
-        _ => return Err(format!("Invalid first operand for '{}' pseudo-instruction. Expected a register, got {}", name, rd)),
+    let rd_reg =
+        match rd {
+            Operand::Register(n) => n,
+            _ => return Err(format!(
+                "Invalid first operand for '{}' pseudo-instruction. Expected a register, got {}",
+                name, rd
+            )),
+        };
+    let Operand::Label(symbol) = symbol else {
+        unreachable!()
     };
-    let Operand::Label(symbol) = symbol else { unreachable!() };
-    let rt_reg = match rt {
-        Operand::Register(n) => n,
-        _ => return Err(format!("Invalid third operand for '{}' pseudo-instruction. Expected a register, got {}", name, rt)),
-    };
+    let rt_reg =
+        match rt {
+            Operand::Register(n) => n,
+            _ => return Err(format!(
+                "Invalid third operand for '{}' pseudo-instruction. Expected a register, got {}",
+                name, rt
+            )),
+        };
     Ok(vec![
         Statement {
-            kind: StatementKind::Instruction("auipc".to_string(), vec![
-                Operand::Register(rt_reg), Operand::Modifier(ModifierKind::Hi, symbol.clone()),
-            ]),
+            kind: StatementKind::Instruction(
+                "auipc".to_string(),
+                vec![
+                    Operand::Register(rt_reg),
+                    Operand::Modifier(ModifierKind::Hi, symbol.clone()),
+                ],
+            ),
             line,
         },
         Statement {
-            kind: StatementKind::Instruction(name.to_string(), vec![
-                Operand::Register(rd_reg),
-                Operand::Memory { offset: MemoryOffset::Modifier(ModifierKind::Lo, symbol), reg: rt_reg },
-            ]),
+            kind: StatementKind::Instruction(
+                name.to_string(),
+                vec![
+                    Operand::Register(rd_reg),
+                    Operand::Memory {
+                        offset: MemoryOffset::Modifier(ModifierKind::Lo, symbol),
+                        reg: rt_reg,
+                    },
+                ],
+            ),
             line,
         },
     ])
@@ -285,7 +407,10 @@ fn expand_jal(name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<Statemen
             line,
         }])
     } else {
-        Ok(vec![Statement { kind: StatementKind::Instruction(name.to_string(), ops), line }])
+        Ok(vec![Statement {
+            kind: StatementKind::Instruction(name.to_string(), ops),
+            line,
+        }])
     }
 }
 
@@ -299,13 +424,21 @@ fn expand_jalr(name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<Stateme
             other => return Err(format!("'jalr' expects a register, got {}", other)),
         };
         Ok(vec![Statement {
-            kind: StatementKind::Instruction("jalr".to_string(), vec![
-                Operand::Register(1), Operand::Register(rs_reg), Operand::Immediate(0),
-            ]),
+            kind: StatementKind::Instruction(
+                "jalr".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Register(rs_reg),
+                    Operand::Immediate(0),
+                ],
+            ),
             line,
         }])
     } else {
-        Ok(vec![Statement { kind: StatementKind::Instruction(name.to_string(), ops), line }])
+        Ok(vec![Statement {
+            kind: StatementKind::Instruction(name.to_string(), ops),
+            line,
+        }])
     }
 }
 
@@ -319,10 +452,12 @@ fn split_hi_lo(offset: Operand, pseudo_name: &str) -> Result<(Operand, Operand),
             Operand::Modifier(ModifierKind::Hi, label.clone()),
             Operand::Modifier(ModifierKind::Lo, label),
         )),
-        _ => Err(format!("Invalid operand for '{}': expected an immediate or label, got {}", pseudo_name, offset)),
+        _ => Err(format!(
+            "Invalid operand for '{}': expected an immediate or label, got {}",
+            pseudo_name, offset
+        )),
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -331,100 +466,197 @@ mod tests {
     #[test]
     fn test_expand_no_pseudoinstruction() {
         let statement = Statement {
-            kind: StatementKind::Instruction("add".to_string(), vec![Operand::Register(1), Operand::Register(2), Operand::Register(3)]),
+            kind: StatementKind::Instruction(
+                "add".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Register(2),
+                    Operand::Register(3),
+                ],
+            ),
             line: 1,
         };
         let expanded = expand_statement(statement).unwrap();
         assert_eq!(expanded.len(), 1);
-        assert_eq!(expanded[0].kind, StatementKind::Instruction("add".to_string(), vec![Operand::Register(1), Operand::Register(2), Operand::Register(3)]));
+        assert_eq!(
+            expanded[0].kind,
+            StatementKind::Instruction(
+                "add".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Register(2),
+                    Operand::Register(3)
+                ]
+            )
+        );
     }
 
     #[test]
     fn test_expand_la() {
         let statement = Statement {
-            kind: StatementKind::Instruction("la".to_string(), vec![Operand::Register(1), Operand::Label("label".to_string())]),
+            kind: StatementKind::Instruction(
+                "la".to_string(),
+                vec![Operand::Register(1), Operand::Label("label".to_string())],
+            ),
             line: 1,
         };
         let expanded = expand_statement(statement).unwrap();
         assert_eq!(expanded.len(), 2);
-        assert_eq!(expanded[0].kind, StatementKind::Instruction("auipc".to_string(), vec![Operand::Register(1), Operand::Modifier(ModifierKind::Hi, "label".to_string())]));
-        assert_eq!(expanded[1].kind, StatementKind::Instruction("addi".to_string(), vec![Operand::Register(1), Operand::Register(1), Operand::Modifier(ModifierKind::Lo, "label".to_string())]));
+        assert_eq!(
+            expanded[0].kind,
+            StatementKind::Instruction(
+                "auipc".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Modifier(ModifierKind::Hi, "label".to_string())
+                ]
+            )
+        );
+        assert_eq!(
+            expanded[1].kind,
+            StatementKind::Instruction(
+                "addi".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Register(1),
+                    Operand::Modifier(ModifierKind::Lo, "label".to_string())
+                ]
+            )
+        );
     }
 
     #[test]
     fn test_expand_la_invalid_operand_count() {
         let statement = Statement {
-            kind: StatementKind::Instruction("la".to_string(), vec![Operand::Immediate(1), Operand::Immediate(2), Operand::Immediate(3)]),
+            kind: StatementKind::Instruction(
+                "la".to_string(),
+                vec![
+                    Operand::Immediate(1),
+                    Operand::Immediate(2),
+                    Operand::Immediate(3),
+                ],
+            ),
             line: 1,
         };
         let result = expand_statement(statement);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "Invalid number of operands for 'la' pseudo-instruction. Expected 2, got 3");
+        assert_eq!(
+            result.unwrap_err(),
+            "Invalid number of operands for 'la' pseudo-instruction. Expected 2, got 3"
+        );
     }
 
     #[test]
     fn test_expand_la_invalid_first_operand() {
         let statement = Statement {
-            kind: StatementKind::Instruction("la".to_string(), vec![Operand::Immediate(1), Operand::Label("label".to_string())]),
+            kind: StatementKind::Instruction(
+                "la".to_string(),
+                vec![Operand::Immediate(1), Operand::Label("label".to_string())],
+            ),
             line: 1,
         };
         let result = expand_statement(statement);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "Invalid first operand for 'la' pseudo-instruction. Expected a register, got 1");
+        assert_eq!(
+            result.unwrap_err(),
+            "Invalid first operand for 'la' pseudo-instruction. Expected a register, got 1"
+        );
     }
 
     #[test]
     fn test_expand_la_invalid_second_operand() {
         let statement = Statement {
-            kind: StatementKind::Instruction("la".to_string(), vec![Operand::Register(1), Operand::Register(2)]),
+            kind: StatementKind::Instruction(
+                "la".to_string(),
+                vec![Operand::Register(1), Operand::Register(2)],
+            ),
             line: 1,
         };
         let result = expand_statement(statement);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "Invalid second operand for 'la' pseudo-instruction. Expected a label, got x2");
+        assert_eq!(
+            result.unwrap_err(),
+            "Invalid second operand for 'la' pseudo-instruction. Expected a label, got x2"
+        );
     }
 
     #[test]
     fn test_expand_lb_base_instruction() {
         // lb a0, 4(sp) — base instruction, should pass through unchanged
         let statement = Statement {
-            kind: StatementKind::Instruction("lb".to_string(), vec![
-                Operand::Register(10),
-                Operand::Memory { offset: MemoryOffset::Immediate(4), reg: 2 }
-            ]),
+            kind: StatementKind::Instruction(
+                "lb".to_string(),
+                vec![
+                    Operand::Register(10),
+                    Operand::Memory {
+                        offset: MemoryOffset::Immediate(4),
+                        reg: 2,
+                    },
+                ],
+            ),
             line: 1,
         };
         let expanded = expand_statement(statement).unwrap();
         assert_eq!(expanded.len(), 1);
-        assert_eq!(expanded[0].kind, StatementKind::Instruction(
-            "lb".to_string(),
-            vec![
-                Operand::Register(10),
-                Operand::Memory { offset: MemoryOffset::Immediate(4), reg: 2 }
-            ]
-        ));
+        assert_eq!(
+            expanded[0].kind,
+            StatementKind::Instruction(
+                "lb".to_string(),
+                vec![
+                    Operand::Register(10),
+                    Operand::Memory {
+                        offset: MemoryOffset::Immediate(4),
+                        reg: 2
+                    }
+                ]
+            )
+        );
     }
 
     #[test]
     fn test_expand_lb() {
         let statement = Statement {
-            kind: StatementKind::Instruction("lb".to_string(), vec![Operand::Register(3), Operand::Label("label".to_string())]),
+            kind: StatementKind::Instruction(
+                "lb".to_string(),
+                vec![Operand::Register(3), Operand::Label("label".to_string())],
+            ),
             line: 1,
         };
         let expanded = expand_statement(statement).unwrap();
         assert_eq!(expanded.len(), 2);
-        assert_eq!(expanded[0].kind, StatementKind::Instruction("auipc".to_string(), vec![Operand::Register(3), Operand::Modifier(ModifierKind::Hi, "label".to_string())]));
-        assert_eq!(expanded[1].kind, StatementKind::Instruction("lb".to_string(), vec![Operand::Register(3), Operand::Memory { offset: MemoryOffset::Modifier(ModifierKind::Lo, "label".to_string()), reg: 3 }]));
+        assert_eq!(
+            expanded[0].kind,
+            StatementKind::Instruction(
+                "auipc".to_string(),
+                vec![
+                    Operand::Register(3),
+                    Operand::Modifier(ModifierKind::Hi, "label".to_string())
+                ]
+            )
+        );
+        assert_eq!(
+            expanded[1].kind,
+            StatementKind::Instruction(
+                "lb".to_string(),
+                vec![
+                    Operand::Register(3),
+                    Operand::Memory {
+                        offset: MemoryOffset::Modifier(ModifierKind::Lo, "label".to_string()),
+                        reg: 3
+                    }
+                ]
+            )
+        );
     }
 
     #[test]
     fn test_expand_lb_invalid_first_operand() {
         // second operand is a label (pseudo form) but first is not a register
         let statement = Statement {
-            kind: StatementKind::Instruction("lb".to_string(), vec![
-                Operand::Immediate(1),
-                Operand::Label("label".to_string())
-            ]),
+            kind: StatementKind::Instruction(
+                "lb".to_string(),
+                vec![Operand::Immediate(1), Operand::Label("label".to_string())],
+            ),
             line: 1,
         };
         assert!(expand_statement(statement).is_err());
@@ -433,59 +665,124 @@ mod tests {
     #[test]
     fn test_expand_sb() {
         let statement = Statement {
-            kind: StatementKind::Instruction("sb".to_string(), vec![Operand::Register(3), Operand::Label("label".to_string()), Operand::Register(4)]),
+            kind: StatementKind::Instruction(
+                "sb".to_string(),
+                vec![
+                    Operand::Register(3),
+                    Operand::Label("label".to_string()),
+                    Operand::Register(4),
+                ],
+            ),
             line: 1,
         };
         let expanded = expand_statement(statement).unwrap();
         assert_eq!(expanded.len(), 2);
-        assert_eq!(expanded[0].kind, StatementKind::Instruction("auipc".to_string(), vec![
-            Operand::Register(4), Operand::Modifier(ModifierKind::Hi, "label".to_string())]));
-        assert_eq!(expanded[1].kind, StatementKind::Instruction("sb".to_string(), vec![
-            Operand::Register(3), Operand::Memory { offset: MemoryOffset::Modifier(ModifierKind::Lo, "label".to_string()), reg: 4 }]));
+        assert_eq!(
+            expanded[0].kind,
+            StatementKind::Instruction(
+                "auipc".to_string(),
+                vec![
+                    Operand::Register(4),
+                    Operand::Modifier(ModifierKind::Hi, "label".to_string())
+                ]
+            )
+        );
+        assert_eq!(
+            expanded[1].kind,
+            StatementKind::Instruction(
+                "sb".to_string(),
+                vec![
+                    Operand::Register(3),
+                    Operand::Memory {
+                        offset: MemoryOffset::Modifier(ModifierKind::Lo, "label".to_string()),
+                        reg: 4
+                    }
+                ]
+            )
+        );
     }
 
     #[test]
     fn test_expand_sb_base_instruction() {
         // sb x1, 0(x2) - base instruction, should pass through unchanged
         let statement = Statement {
-            kind: StatementKind::Instruction("sb".to_string(), vec![
-                Operand::Register(3), Operand::Memory { offset: MemoryOffset::Immediate(0), reg: 2 }]),
+            kind: StatementKind::Instruction(
+                "sb".to_string(),
+                vec![
+                    Operand::Register(3),
+                    Operand::Memory {
+                        offset: MemoryOffset::Immediate(0),
+                        reg: 2,
+                    },
+                ],
+            ),
             line: 1,
         };
         let expanded = expand_statement(statement).unwrap();
         assert_eq!(expanded.len(), 1);
-        assert_eq!(expanded[0].kind, StatementKind::Instruction("sb".to_string(), vec![
-            Operand::Register(3), Operand::Memory { offset: MemoryOffset::Immediate(0), reg: 2 }]));
+        assert_eq!(
+            expanded[0].kind,
+            StatementKind::Instruction(
+                "sb".to_string(),
+                vec![
+                    Operand::Register(3),
+                    Operand::Memory {
+                        offset: MemoryOffset::Immediate(0),
+                        reg: 2
+                    }
+                ]
+            )
+        );
     }
 
     #[test]
     fn test_expand_li_boundary_small_positive() {
         // 2047 is the last value fitting in 12-bit signed => single addi
         let expanded = expand_statement(Statement {
-            kind: StatementKind::Instruction("li".to_string(), vec![
-                Operand::Register(1), Operand::Immediate(2047)
-            ]),
+            kind: StatementKind::Instruction(
+                "li".to_string(),
+                vec![Operand::Register(1), Operand::Immediate(2047)],
+            ),
             line: 1,
-        }).unwrap();
+        })
+        .unwrap();
         assert_eq!(expanded.len(), 1);
-        assert_eq!(expanded[0].kind, StatementKind::Instruction("addi".to_string(), vec![
-            Operand::Register(1), Operand::Register(0), Operand::Immediate(2047)
-        ]));
+        assert_eq!(
+            expanded[0].kind,
+            StatementKind::Instruction(
+                "addi".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Register(0),
+                    Operand::Immediate(2047)
+                ]
+            )
+        );
     }
 
     #[test]
     fn test_expand_li_boundary_small_negative() {
         // -2048 is the last negative value fitting in 12-bit signed => single addi
         let expanded = expand_statement(Statement {
-            kind: StatementKind::Instruction("li".to_string(), vec![
-                Operand::Register(1), Operand::Immediate(-2048)
-            ]),
+            kind: StatementKind::Instruction(
+                "li".to_string(),
+                vec![Operand::Register(1), Operand::Immediate(-2048)],
+            ),
             line: 1,
-        }).unwrap();
+        })
+        .unwrap();
         assert_eq!(expanded.len(), 1);
-        assert_eq!(expanded[0].kind, StatementKind::Instruction("addi".to_string(), vec![
-            Operand::Register(1), Operand::Register(0), Operand::Immediate(-2048)
-        ]));
+        assert_eq!(
+            expanded[0].kind,
+            StatementKind::Instruction(
+                "addi".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Register(0),
+                    Operand::Immediate(-2048)
+                ]
+            )
+        );
     }
 
     #[test]
@@ -494,18 +791,32 @@ mod tests {
         // hi = (0x800 + 0x800) >> 12 = 1,  lo = -2048
         // sanity: (1 << 12) + (-2048) = 0x1000 - 0x800 = 0x800 = 2048
         let expanded = expand_statement(Statement {
-            kind: StatementKind::Instruction("li".to_string(), vec![
-                Operand::Register(1), Operand::Immediate(2048)
-            ]),
+            kind: StatementKind::Instruction(
+                "li".to_string(),
+                vec![Operand::Register(1), Operand::Immediate(2048)],
+            ),
             line: 1,
-        }).unwrap();
+        })
+        .unwrap();
         assert_eq!(expanded.len(), 2);
-        assert_eq!(expanded[0].kind, StatementKind::Instruction("lui".to_string(), vec![
-            Operand::Register(1), Operand::Immediate(1)
-        ]));
-        assert_eq!(expanded[1].kind, StatementKind::Instruction("addi".to_string(), vec![
-            Operand::Register(1), Operand::Register(1), Operand::Immediate(-2048)
-        ]));
+        assert_eq!(
+            expanded[0].kind,
+            StatementKind::Instruction(
+                "lui".to_string(),
+                vec![Operand::Register(1), Operand::Immediate(1)]
+            )
+        );
+        assert_eq!(
+            expanded[1].kind,
+            StatementKind::Instruction(
+                "addi".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Register(1),
+                    Operand::Immediate(-2048)
+                ]
+            )
+        );
     }
 
     #[test]
@@ -514,37 +825,69 @@ mod tests {
         // lo = 0x7FF = 2047 (bit 11 clear, positive), hi = -1
         // sanity: (-1 << 12) + 2047 = -4096 + 2047 = -2049
         let expanded = expand_statement(Statement {
-            kind: StatementKind::Instruction("li".to_string(), vec![
-                Operand::Register(1), Operand::Immediate(-2049)
-            ]),
+            kind: StatementKind::Instruction(
+                "li".to_string(),
+                vec![Operand::Register(1), Operand::Immediate(-2049)],
+            ),
             line: 1,
-        }).unwrap();
+        })
+        .unwrap();
         assert_eq!(expanded.len(), 2);
-        assert_eq!(expanded[0].kind, StatementKind::Instruction("lui".to_string(), vec![
-            Operand::Register(1), Operand::Immediate(-1)
-        ]));
-        assert_eq!(expanded[1].kind, StatementKind::Instruction("addi".to_string(), vec![
-            Operand::Register(1), Operand::Register(1), Operand::Immediate(2047)
-        ]));
+        assert_eq!(
+            expanded[0].kind,
+            StatementKind::Instruction(
+                "lui".to_string(),
+                vec![Operand::Register(1), Operand::Immediate(-1)]
+            )
+        );
+        assert_eq!(
+            expanded[1].kind,
+            StatementKind::Instruction(
+                "addi".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Register(1),
+                    Operand::Immediate(2047)
+                ]
+            )
+        );
     }
 
     #[test]
     fn test_expand_li_negative_small() {
         let statement = Statement {
-            kind: StatementKind::Instruction("li".to_string(), vec![Operand::Register(1), Operand::Immediate(-100)]),
+            kind: StatementKind::Instruction(
+                "li".to_string(),
+                vec![Operand::Register(1), Operand::Immediate(-100)],
+            ),
             line: 1,
         };
         let expanded = expand_statement(statement).unwrap();
         assert_eq!(expanded.len(), 1);
-        assert_eq!(expanded[0].kind, StatementKind::Instruction("addi".to_string(), vec![Operand::Register(1), Operand::Register(0), Operand::Immediate(-100)]));
+        assert_eq!(
+            expanded[0].kind,
+            StatementKind::Instruction(
+                "addi".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Register(0),
+                    Operand::Immediate(-100)
+                ]
+            )
+        );
     }
 
     #[test]
     fn test_expand_li_large_bit11_set() {
         // 0x12345ABC — lo = 0xABC, bit 11 is SET → +0x800 correction triggers
         let statement = Statement {
-            kind: StatementKind::Instruction("li".to_string(),
-                vec![Operand::Register(1), Operand::Immediate(0x12345ABC_u32 as i32)]),
+            kind: StatementKind::Instruction(
+                "li".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Immediate(0x12345ABC_u32 as i32),
+                ],
+            ),
             line: 1,
         };
         let expanded = expand_statement(statement).unwrap();
@@ -553,112 +896,402 @@ mod tests {
         // lo = sign_extend(0xABC) = -1348
         assert_eq!(
             expanded[0].kind,
-            StatementKind::Instruction("lui".to_string(), vec![Operand::Register(1), Operand::Immediate(0x12346)])
+            StatementKind::Instruction(
+                "lui".to_string(),
+                vec![Operand::Register(1), Operand::Immediate(0x12346)]
+            )
         );
         assert_eq!(
             expanded[1].kind,
-            StatementKind::Instruction("addi".to_string(), vec![
-                Operand::Register(1), Operand::Register(1), Operand::Immediate(-1348)
-            ])
+            StatementKind::Instruction(
+                "addi".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Register(1),
+                    Operand::Immediate(-1348)
+                ]
+            )
         );
     }
 
     #[test]
     fn test_expand_li_max_i32() {
         let statement = Statement {
-            kind: StatementKind::Instruction("li".to_string(), vec![Operand::Register(1), Operand::Immediate(0x7FFFFFFF)]),
+            kind: StatementKind::Instruction(
+                "li".to_string(),
+                vec![Operand::Register(1), Operand::Immediate(0x7FFFFFFF)],
+            ),
             line: 1,
         };
         let expanded = expand_statement(statement).unwrap();
         assert_eq!(expanded.len(), 2);
         // hi20 = (0x7FFFFFFF + 0x800) >> 12 = 0x80000 (wrapping)
         // lo12 = (0x7FFFFFFF << 20) >> 20 = -1
-        assert_eq!(expanded[0].kind, StatementKind::Instruction("lui".to_string(), vec![
-            Operand::Register(1), Operand::Immediate(0x80000u32 as i32)]));
-        assert_eq!(expanded[1].kind, StatementKind::Instruction("addi".to_string(), vec![
-            Operand::Register(1), Operand::Register(1), Operand::Immediate(-1)]));
+        assert_eq!(
+            expanded[0].kind,
+            StatementKind::Instruction(
+                "lui".to_string(),
+                vec![Operand::Register(1), Operand::Immediate(0x80000u32 as i32)]
+            )
+        );
+        assert_eq!(
+            expanded[1].kind,
+            StatementKind::Instruction(
+                "addi".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Register(1),
+                    Operand::Immediate(-1)
+                ]
+            )
+        );
     }
 
     #[test]
     fn test_expand_call() {
         let statement = Statement {
-            kind: StatementKind::Instruction("call".to_string(), vec![Operand::Label("loop".to_string())]),
+            kind: StatementKind::Instruction(
+                "call".to_string(),
+                vec![Operand::Label("loop".to_string())],
+            ),
             line: 1,
         };
         let expanded = expand_statement(statement).unwrap();
         assert_eq!(expanded.len(), 2);
-        assert_eq!(expanded[0].kind, StatementKind::Instruction(
-            "auipc".to_string(),
-            vec![Operand::Register(1), Operand::Modifier(ModifierKind::Hi, "loop".to_string())]
-        ));
-        assert_eq!(expanded[1].kind, StatementKind::Instruction(
-            "jalr".to_string(),
-            vec![Operand::Register(1), Operand::Register(1), Operand::Modifier(ModifierKind::Lo, "loop".to_string())]
-        ));
+        assert_eq!(
+            expanded[0].kind,
+            StatementKind::Instruction(
+                "auipc".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Modifier(ModifierKind::Hi, "loop".to_string())
+                ]
+            )
+        );
+        assert_eq!(
+            expanded[1].kind,
+            StatementKind::Instruction(
+                "jalr".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Register(1),
+                    Operand::Modifier(ModifierKind::Lo, "loop".to_string())
+                ]
+            )
+        );
     }
 
     #[test]
     fn test_expand_call_immediate_bit11_set() {
         // validates the +0x800 correction in call/tail immediate path
         let statement = Statement {
-            kind: StatementKind::Instruction("call".to_string(),
-                vec![Operand::Immediate(0x12800)]),
+            kind: StatementKind::Instruction("call".to_string(), vec![Operand::Immediate(0x12800)]),
             line: 1,
         };
         let expanded = expand_statement(statement).unwrap();
         // hi = (0x12800 + 0x800) >> 12 = 0x13
         // lo = -2048
-        assert_eq!(expanded[0].kind, StatementKind::Instruction("auipc".to_string(),
-            vec![Operand::Register(1), Operand::Immediate(0x13)]));
-        assert_eq!(expanded[1].kind, StatementKind::Instruction("jalr".to_string(),
-            vec![Operand::Register(1), Operand::Register(1), Operand::Immediate(-2048)]));
+        assert_eq!(
+            expanded[0].kind,
+            StatementKind::Instruction(
+                "auipc".to_string(),
+                vec![Operand::Register(1), Operand::Immediate(0x13)]
+            )
+        );
+        assert_eq!(
+            expanded[1].kind,
+            StatementKind::Instruction(
+                "jalr".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Register(1),
+                    Operand::Immediate(-2048)
+                ]
+            )
+        );
     }
 
     #[test]
     fn test_expand_tail() {
         let statement = Statement {
-            kind: StatementKind::Instruction("tail".to_string(), vec![Operand::Label("loop".to_string())]),
+            kind: StatementKind::Instruction(
+                "tail".to_string(),
+                vec![Operand::Label("loop".to_string())],
+            ),
             line: 1,
         };
         let expanded = expand_statement(statement).unwrap();
         assert_eq!(expanded.len(), 2);
-        assert_eq!(expanded[0].kind, StatementKind::Instruction(
-            "auipc".to_string(),
-            vec![Operand::Register(6), Operand::Modifier(ModifierKind::Hi, "loop".to_string())]
-        ));
-        assert_eq!(expanded[1].kind, StatementKind::Instruction(
-            "jalr".to_string(),
-            vec![Operand::Register(0), Operand::Register(6), Operand::Modifier(ModifierKind::Lo, "loop".to_string())]
-        ));
+        assert_eq!(
+            expanded[0].kind,
+            StatementKind::Instruction(
+                "auipc".to_string(),
+                vec![
+                    Operand::Register(6),
+                    Operand::Modifier(ModifierKind::Hi, "loop".to_string())
+                ]
+            )
+        );
+        assert_eq!(
+            expanded[1].kind,
+            StatementKind::Instruction(
+                "jalr".to_string(),
+                vec![
+                    Operand::Register(0),
+                    Operand::Register(6),
+                    Operand::Modifier(ModifierKind::Lo, "loop".to_string())
+                ]
+            )
+        );
     }
 
     #[test]
     fn test_expand_basic_pseudo_instructions() {
         let test_cases = vec![
-            ("nop", vec![], "addi", vec![Operand::Register(0), Operand::Register(0), Operand::Immediate(0)]),
-            ("mv", vec![Operand::Register(11), Operand::Register(12)], "addi", vec![Operand::Register(11), Operand::Register(12), Operand::Immediate(0)]),
-            ("not", vec![Operand::Register(11), Operand::Register(12)], "xori", vec![Operand::Register(11), Operand::Register(12), Operand::Immediate(-1)]),
-            ("neg", vec![Operand::Register(11), Operand::Register(12)], "sub", vec![Operand::Register(11), Operand::Register(0), Operand::Register(12)]),
-            ("seqz", vec![Operand::Register(11), Operand::Register(12)], "sltiu", vec![Operand::Register(11), Operand::Register(12), Operand::Immediate(1)]),
-            ("snez", vec![Operand::Register(11), Operand::Register(12)], "sltu", vec![Operand::Register(11), Operand::Register(0), Operand::Register(12)]),
-            ("sltz", vec![Operand::Register(11), Operand::Register(12)], "slti", vec![Operand::Register(11), Operand::Register(12), Operand::Immediate(0)]),
-            ("sgtz", vec![Operand::Register(11), Operand::Register(12)], "slt", vec![Operand::Register(11), Operand::Register(0), Operand::Register(12)]),
-            ("beqz", vec![Operand::Register(11), Operand::Label("label".to_string())], "beq", vec![Operand::Register(11), Operand::Register(0), Operand::Label("label".to_string())]),
-            ("bnez", vec![Operand::Register(11), Operand::Label("label".to_string())], "bne", vec![Operand::Register(11), Operand::Register(0), Operand::Label("label".to_string())]),
-            ("blez", vec![Operand::Register(11), Operand::Label("label".to_string())], "bge", vec![Operand::Register(0), Operand::Register(11), Operand::Label("label".to_string())]),
-            ("bgez", vec![Operand::Register(11), Operand::Label("label".to_string())], "bge", vec![Operand::Register(11), Operand::Register(0), Operand::Label("label".to_string())]),
-            ("bltz", vec![Operand::Register(11), Operand::Label("label".to_string())], "blt", vec![Operand::Register(11), Operand::Register(0), Operand::Label("label".to_string())]),
-            ("bgtz", vec![Operand::Register(11), Operand::Label("label".to_string())], "blt", vec![Operand::Register(0), Operand::Register(11), Operand::Label("label".to_string())]),
-            ("bgt", vec![Operand::Register(11), Operand::Register(12), Operand::Label("label".to_string())], "blt", vec![Operand::Register(12), Operand::Register(11), Operand::Label("label".to_string())]),
-            ("ble", vec![Operand::Register(11), Operand::Register(12), Operand::Label("label".to_string())], "bge", vec![Operand::Register(12), Operand::Register(11), Operand::Label("label".to_string())]),
-            ("bgtu", vec![Operand::Register(11), Operand::Register(12), Operand::Label("label".to_string())], "bltu", vec![Operand::Register(12), Operand::Register(11), Operand::Label("label".to_string())]),
-            ("bleu", vec![Operand::Register(11), Operand::Register(12), Operand::Label("label".to_string())], "bgeu", vec![Operand::Register(12), Operand::Register(11), Operand::Label("label".to_string())]),
-            ("j", vec![Operand::Immediate(10)], "jal", vec![Operand::Register(0), Operand::Immediate(10)]),
-            ("j", vec![Operand::Label("label".to_string())], "jal", vec![Operand::Register(0), Operand::Label("label".to_string())]),
-            ("jal", vec![Operand::Label("label".to_string())], "jal", vec![Operand::Register(1), Operand::Label("label".to_string())]),
-            ("jr", vec![Operand::Register(1)], "jalr", vec![Operand::Register(0), Operand::Register(1), Operand::Immediate(0)]),
-            ("jalr", vec![Operand::Register(11)], "jalr", vec![Operand::Register(1), Operand::Register(11), Operand::Immediate(0)]),
-            ("ret", vec![], "jalr", vec![Operand::Register(0), Operand::Register(1), Operand::Immediate(0)]),
+            (
+                "nop",
+                vec![],
+                "addi",
+                vec![
+                    Operand::Register(0),
+                    Operand::Register(0),
+                    Operand::Immediate(0),
+                ],
+            ),
+            (
+                "mv",
+                vec![Operand::Register(11), Operand::Register(12)],
+                "addi",
+                vec![
+                    Operand::Register(11),
+                    Operand::Register(12),
+                    Operand::Immediate(0),
+                ],
+            ),
+            (
+                "not",
+                vec![Operand::Register(11), Operand::Register(12)],
+                "xori",
+                vec![
+                    Operand::Register(11),
+                    Operand::Register(12),
+                    Operand::Immediate(-1),
+                ],
+            ),
+            (
+                "neg",
+                vec![Operand::Register(11), Operand::Register(12)],
+                "sub",
+                vec![
+                    Operand::Register(11),
+                    Operand::Register(0),
+                    Operand::Register(12),
+                ],
+            ),
+            (
+                "seqz",
+                vec![Operand::Register(11), Operand::Register(12)],
+                "sltiu",
+                vec![
+                    Operand::Register(11),
+                    Operand::Register(12),
+                    Operand::Immediate(1),
+                ],
+            ),
+            (
+                "snez",
+                vec![Operand::Register(11), Operand::Register(12)],
+                "sltu",
+                vec![
+                    Operand::Register(11),
+                    Operand::Register(0),
+                    Operand::Register(12),
+                ],
+            ),
+            (
+                "sltz",
+                vec![Operand::Register(11), Operand::Register(12)],
+                "slti",
+                vec![
+                    Operand::Register(11),
+                    Operand::Register(12),
+                    Operand::Immediate(0),
+                ],
+            ),
+            (
+                "sgtz",
+                vec![Operand::Register(11), Operand::Register(12)],
+                "slt",
+                vec![
+                    Operand::Register(11),
+                    Operand::Register(0),
+                    Operand::Register(12),
+                ],
+            ),
+            (
+                "beqz",
+                vec![Operand::Register(11), Operand::Label("label".to_string())],
+                "beq",
+                vec![
+                    Operand::Register(11),
+                    Operand::Register(0),
+                    Operand::Label("label".to_string()),
+                ],
+            ),
+            (
+                "bnez",
+                vec![Operand::Register(11), Operand::Label("label".to_string())],
+                "bne",
+                vec![
+                    Operand::Register(11),
+                    Operand::Register(0),
+                    Operand::Label("label".to_string()),
+                ],
+            ),
+            (
+                "blez",
+                vec![Operand::Register(11), Operand::Label("label".to_string())],
+                "bge",
+                vec![
+                    Operand::Register(0),
+                    Operand::Register(11),
+                    Operand::Label("label".to_string()),
+                ],
+            ),
+            (
+                "bgez",
+                vec![Operand::Register(11), Operand::Label("label".to_string())],
+                "bge",
+                vec![
+                    Operand::Register(11),
+                    Operand::Register(0),
+                    Operand::Label("label".to_string()),
+                ],
+            ),
+            (
+                "bltz",
+                vec![Operand::Register(11), Operand::Label("label".to_string())],
+                "blt",
+                vec![
+                    Operand::Register(11),
+                    Operand::Register(0),
+                    Operand::Label("label".to_string()),
+                ],
+            ),
+            (
+                "bgtz",
+                vec![Operand::Register(11), Operand::Label("label".to_string())],
+                "blt",
+                vec![
+                    Operand::Register(0),
+                    Operand::Register(11),
+                    Operand::Label("label".to_string()),
+                ],
+            ),
+            (
+                "bgt",
+                vec![
+                    Operand::Register(11),
+                    Operand::Register(12),
+                    Operand::Label("label".to_string()),
+                ],
+                "blt",
+                vec![
+                    Operand::Register(12),
+                    Operand::Register(11),
+                    Operand::Label("label".to_string()),
+                ],
+            ),
+            (
+                "ble",
+                vec![
+                    Operand::Register(11),
+                    Operand::Register(12),
+                    Operand::Label("label".to_string()),
+                ],
+                "bge",
+                vec![
+                    Operand::Register(12),
+                    Operand::Register(11),
+                    Operand::Label("label".to_string()),
+                ],
+            ),
+            (
+                "bgtu",
+                vec![
+                    Operand::Register(11),
+                    Operand::Register(12),
+                    Operand::Label("label".to_string()),
+                ],
+                "bltu",
+                vec![
+                    Operand::Register(12),
+                    Operand::Register(11),
+                    Operand::Label("label".to_string()),
+                ],
+            ),
+            (
+                "bleu",
+                vec![
+                    Operand::Register(11),
+                    Operand::Register(12),
+                    Operand::Label("label".to_string()),
+                ],
+                "bgeu",
+                vec![
+                    Operand::Register(12),
+                    Operand::Register(11),
+                    Operand::Label("label".to_string()),
+                ],
+            ),
+            (
+                "j",
+                vec![Operand::Immediate(10)],
+                "jal",
+                vec![Operand::Register(0), Operand::Immediate(10)],
+            ),
+            (
+                "j",
+                vec![Operand::Label("label".to_string())],
+                "jal",
+                vec![Operand::Register(0), Operand::Label("label".to_string())],
+            ),
+            (
+                "jal",
+                vec![Operand::Label("label".to_string())],
+                "jal",
+                vec![Operand::Register(1), Operand::Label("label".to_string())],
+            ),
+            (
+                "jr",
+                vec![Operand::Register(1)],
+                "jalr",
+                vec![
+                    Operand::Register(0),
+                    Operand::Register(1),
+                    Operand::Immediate(0),
+                ],
+            ),
+            (
+                "jalr",
+                vec![Operand::Register(11)],
+                "jalr",
+                vec![
+                    Operand::Register(1),
+                    Operand::Register(11),
+                    Operand::Immediate(0),
+                ],
+            ),
+            (
+                "ret",
+                vec![],
+                "jalr",
+                vec![
+                    Operand::Register(0),
+                    Operand::Register(1),
+                    Operand::Immediate(0),
+                ],
+            ),
         ];
 
         for (name, ops, expected_name, expected_ops) in test_cases {
@@ -668,7 +1301,12 @@ mod tests {
             };
             let expanded = expand_statement(statement).unwrap();
             assert_eq!(expanded.len(), 1, "Failed expansion for {}", name);
-            assert_eq!(expanded[0].kind, StatementKind::Instruction(expected_name.to_string(), expected_ops), "Mismatch for {}", name);
+            assert_eq!(
+                expanded[0].kind,
+                StatementKind::Instruction(expected_name.to_string(), expected_ops),
+                "Mismatch for {}",
+                name
+            );
         }
     }
 
@@ -679,13 +1317,19 @@ mod tests {
             kind: StatementKind::Instruction("mv".to_string(), vec![Operand::Register(1)]),
             line: 1,
         });
-        assert_eq!(result.unwrap_err(), "Invalid number of operands for 'mv' pseudo-instruction. Expected 2, got 1");
+        assert_eq!(
+            result.unwrap_err(),
+            "Invalid number of operands for 'mv' pseudo-instruction. Expected 2, got 1"
+        );
 
         // too many: nop expects 0, give 1
         let result = expand_statement(Statement {
             kind: StatementKind::Instruction("nop".to_string(), vec![Operand::Register(1)]),
             line: 1,
         });
-        assert_eq!(result.unwrap_err(), "Invalid number of operands for 'nop' pseudo-instruction. Expected 0, got 1");
+        assert_eq!(
+            result.unwrap_err(),
+            "Invalid number of operands for 'nop' pseudo-instruction. Expected 0, got 1"
+        );
     }
 }
