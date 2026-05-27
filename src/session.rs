@@ -22,16 +22,23 @@ impl Session {
     pub fn new() -> Self {
         let processor = Processor::new();
         let prev_registers = *processor.registers();
-        Self { processor, debug_info: None, prev_registers }
+        Self {
+            processor,
+            debug_info: None,
+            prev_registers,
+        }
     }
 
     pub fn load_source(&mut self, source: &str) -> Result<(), CompileError> {
         let tokens = lexer::tokenize(source).map_err(CompileError::Lex)?;
-        let statements = parser::Parser::new(tokens).parse().map_err(CompileError::Parse)?;
-        let statements = pseudo::expand(statements)
-            .map_err(|e| CompileError::Pseudo(e.to_string()))?;
+        let statements = parser::Parser::new(tokens)
+            .parse()
+            .map_err(CompileError::Parse)?;
+        let statements =
+            pseudo::expand(statements).map_err(|e| CompileError::Pseudo(e.to_string()))?;
         let mut sym = symbols::SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
-        sym.build(&statements).map_err(|e| CompileError::Symbol(e.to_string()))?;
+        sym.build(&statements)
+            .map_err(|e| CompileError::Symbol(e.to_string()))?;
         let program = assembler::Assembler::new(config::TEXT_BASE, config::DATA_BASE)
             .assemble(&statements, &sym)
             .map_err(CompileError::Assemble)?;
