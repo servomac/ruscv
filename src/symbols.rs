@@ -1,4 +1,4 @@
-use crate::assembler::{align_padding, balign_padding, space_size};
+use crate::assembler::{align_padding, balign_padding, emit_data_bytes};
 use crate::config;
 use crate::parser::{DirectiveKind, Operand, Section, Statement, StatementKind};
 use std::collections::HashMap;
@@ -64,6 +64,16 @@ impl SymbolTable {
                 }
 
                 StatementKind::Instruction(_, _) => {
+                    // INVARIANT: build() runs on post-pseudo-expansion statements
+                    // (session.rs calls pseudo::expand first), so every instruction
+                    // is exactly 4 bytes. If expansion ever becomes address-dependent
+                    // (e.g. a `la` that picks 1 vs 2 instructions), this assumption
+                    // breaks and every later label silently skews.
+                    debug_assert!(
+                        crate::pseudo::expands_to_self(stmt),
+                        "SymbolTable::build received an unexpanded pseudo-instruction at line {}",
+                        stmt.line
+                    );
                     if current_section == Section::Text {
                         text_offset = grow_section(current_section, text_offset, 4)?;
                     } else {
@@ -91,7 +101,9 @@ impl SymbolTable {
         Ok(())
     }
 
-    // Size in bytes that the directive will occupy in memory
+    // Size in bytes that the directive will occupy in memory. Alignment uses
+    // the same padding helpers as pass 2; data directives are sized by running
+    // the real emitter and taking the length, so the two passes cannot diverge.
     fn calculate_directive_size(
         &self,
         kind: &DirectiveKind,
@@ -106,38 +118,6 @@ impl SymbolTable {
                     Err("Directive .align requires a power of 2 parameter".into())
                 }
             }
-            DirectiveKind::Word => Ok((operands.len() as u32) * 4),
-            DirectiveKind::Half => Ok((operands.len() as u32) * 2),
-            DirectiveKind::Byte => Ok(operands.len() as u32),
-            DirectiveKind::Ascii => {
-                let mut total = 0;
-                for op in operands {
-                    if let Operand::StringLiteral(s) = op {
-                        total += s.len() as u32;
-                    } else {
-                        return Err("Directive .ascii requires a string literal".into());
-                    }
-                }
-                Ok(total)
-            }
-            DirectiveKind::Asciz => {
-                let mut total = 0;
-                for op in operands {
-                    if let Operand::StringLiteral(s) = op {
-                        total += s.len() as u32 + 1; // +1 for null terminator
-                    } else {
-                        return Err("Directive .asciz requires a string literal".into());
-                    }
-                }
-                Ok(total)
-            }
-            DirectiveKind::Space => {
-                if let Some(Operand::Immediate(n)) = operands.get(0) {
-                    space_size(*n)
-                } else {
-                    Err("Directive .space requires an immediate value".into())
-                }
-            }
             DirectiveKind::Balign => {
                 if let Some(Operand::Immediate(n)) = operands.get(0) {
                     balign_padding(current_pc, *n)
@@ -145,9 +125,9 @@ impl SymbolTable {
                     Err("Directive .balign requires a byte-count parameter".into())
                 }
             }
-            DirectiveKind::Unknown(name) => Err(format!("Unknown directive '{}'", name)),
             // Section switches and no-ops are handled before calculate_directive_size is called.
             DirectiveKind::Text | DirectiveKind::Data | DirectiveKind::Globl => Ok(0),
+            _ => emit_data_bytes(kind, operands).map(|bytes| bytes.len() as u32),
         }
     }
 

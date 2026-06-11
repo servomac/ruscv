@@ -661,7 +661,9 @@ fn encode_j_type(
     }
 }
 
-fn emit_data_bytes(kind: &DirectiveKind, ops: &[Operand]) -> Result<Vec<u8>, String> {
+// Also used by pass 1 (symbols.rs), which sizes data directives by emitting
+// them and taking the length — so sizing and emission can never diverge.
+pub fn emit_data_bytes(kind: &DirectiveKind, ops: &[Operand]) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     match kind {
         DirectiveKind::Byte => {
@@ -801,6 +803,36 @@ mod tests {
             ]
         );
         assert_eq!(program.data_bin, vec![0x2A, 0x00, 0x00, 0x00]); // .word 42
+    }
+
+    #[test]
+    fn test_pass1_addresses_match_pass2_emission() {
+        // Mixed data directives, including a non-power-of-two .balign (which
+        // once diverged between the passes): the label address computed in
+        // pass 1 must equal DATA_BASE + the size pass 2 actually emitted.
+        let source = r#"
+            .data
+            a: .byte 1, 2
+            .balign 3
+            b: .half 5
+            .ascii "hey"
+            .asciz "yo"
+            .space 5
+            .align 2
+            end: .word 42
+        "#;
+        let tokens = crate::lexer::tokenize(source).unwrap();
+        let statements = crate::parser::Parser::new(tokens).parse().unwrap();
+        let statements = crate::pseudo::expand(statements).unwrap();
+        let mut sym_table = SymbolTable::new(config::TEXT_BASE, config::DATA_BASE);
+        sym_table.build(&statements).unwrap();
+        let program = Assembler::new(config::TEXT_BASE, config::DATA_BASE)
+            .assemble(&statements, &sym_table)
+            .unwrap();
+        assert_eq!(
+            sym_table.get_address("end"),
+            Some(config::DATA_BASE + program.data_bin.len() as u32 - 4)
+        );
     }
 
     #[test]

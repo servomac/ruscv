@@ -140,13 +140,13 @@ impl fmt::Display for Operand {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Statement {
     pub kind: StatementKind,
     pub line: usize,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum StatementKind {
     Instruction(String, Vec<Operand>),
     Label(String),

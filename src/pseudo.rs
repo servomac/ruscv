@@ -272,6 +272,19 @@ static PSEUDO_TABLE: &[(&str, Expansion)] = &[
     ("jalr", Custom(expand_jalr)),
 ];
 
+/// True when `stmt` is already in base form: expanding it yields exactly
+/// itself. SymbolTable::build sizes every instruction as 4 bytes and uses
+/// this (in a debug_assert) to catch unexpanded pseudo-instructions, which
+/// would silently skew every later label address.
+pub fn expands_to_self(stmt: &Statement) -> bool {
+    match expand_statement(stmt.clone()) {
+        Ok(expanded) => expanded.len() == 1 && expanded[0] == *stmt,
+        // Expansion errors are reported by the pseudo stage itself; sizing
+        // callers only care that the statement is not a multi-instruction form.
+        Err(_) => true,
+    }
+}
+
 pub fn expand(statements: Vec<Statement>) -> Result<Vec<Statement>, String> {
     let mut expanded = Vec::with_capacity(statements.len());
     for stmt in statements {
@@ -666,6 +679,46 @@ fn split_hi_lo(offset: Operand, pseudo_name: &str) -> Result<(Operand, Operand),
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_expands_to_self() {
+        let base = |name: &str, ops: Vec<Operand>| Statement {
+            kind: StatementKind::Instruction(name.to_string(), ops),
+            line: 1,
+        };
+        // Base forms survive expansion unchanged.
+        assert!(expands_to_self(&base(
+            "add",
+            vec![
+                Operand::Register(1),
+                Operand::Register(2),
+                Operand::Register(3)
+            ]
+        )));
+        assert!(expands_to_self(&base(
+            "lw",
+            vec![
+                Operand::Register(1),
+                Operand::Memory {
+                    offset: MemoryOffset::Immediate(0),
+                    reg: 2
+                }
+            ]
+        )));
+        // Pseudo forms do not: renamed or multi-instruction.
+        assert!(!expands_to_self(&base(
+            "li",
+            vec![Operand::Register(1), Operand::Immediate(5)]
+        )));
+        assert!(!expands_to_self(&base(
+            "la",
+            vec![Operand::Register(1), Operand::Label("x".to_string())]
+        )));
+        assert!(!expands_to_self(&base(
+            "lw",
+            vec![Operand::Register(1), Operand::Label("x".to_string())]
+        )));
+    }
 
     #[test]
     fn test_expand_no_pseudoinstruction() {
