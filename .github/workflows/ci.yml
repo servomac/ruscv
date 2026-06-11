@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --check
+
+      # TODO(PLAN.md 4.2): switch to `-D warnings` and drop continue-on-error
+      # once the existing warnings are cleaned up.
+      - name: Clippy (non-blocking until 4.2)
+        run: cargo clippy --all-targets
+        continue-on-error: true
+
+      - name: Unit tests
+        run: cargo test
+
+      # Pre-built rv32ui-p ELF binaries; no RISC-V toolchain needed. The test
+      # list and download URL live in the Makefile, so key the cache on it.
+      - name: Cache rv32ui test binaries
+        uses: actions/cache@v4
+        with:
+          path: tests/rv32ui
+          key: rv32ui-${{ hashFiles('Makefile') }}
+
+      - name: rv32ui suite
+        run: make run-tests
