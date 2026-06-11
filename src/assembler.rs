@@ -634,6 +634,12 @@ fn encode_j_type(
         if offset < -1048576 || offset > 1048574 {
             return Err(format!("Jump target offset {} out of range", offset));
         }
+        if offset % 2 != 0 {
+            return Err(format!(
+                "Jump target offset {} must be a multiple of 2",
+                offset
+            ));
+        }
 
         let imm_20 = (offset >> 20) & 0x1;
         let imm_10_1 = (offset >> 1) & 0x3FF;
@@ -795,6 +801,57 @@ mod tests {
             ]
         );
         assert_eq!(program.data_bin, vec![0x2A, 0x00, 0x00, 0x00]); // .word 42
+    }
+
+    #[test]
+    fn test_jal_encoding_forward_and_backward() {
+        let (assembler, mut sym_table) = setup();
+        sym_table
+            .add_label("fwd".to_string(), config::TEXT_BASE + 16)
+            .unwrap();
+        sym_table.add_label("back".to_string(), config::TEXT_BASE).unwrap();
+        let statements = vec![
+            Statement {
+                kind: StatementKind::Instruction(
+                    "jal".to_string(),
+                    vec![Operand::Register(1), Operand::Label("fwd".to_string())],
+                ),
+                line: 1,
+            },
+            Statement {
+                kind: StatementKind::Instruction(
+                    "jal".to_string(),
+                    vec![Operand::Register(1), Operand::Label("back".to_string())],
+                ),
+                line: 2,
+            },
+        ];
+        let program = assembler
+            .assemble(&statements, &sym_table)
+            .expect("Assembly should succeed");
+        let fwd = u32::from_le_bytes(program.text_bin[0..4].try_into().unwrap());
+        let back = u32::from_le_bytes(program.text_bin[4..8].try_into().unwrap());
+        // Hand-computed J-type words: offset +16 and offset -4, rd = ra.
+        assert_eq!(fwd, 0x010000EF);
+        assert_eq!(back, 0xFFDFF0EF);
+    }
+
+    #[test]
+    fn test_jal_rejects_misaligned_target() {
+        let (assembler, mut sym_table) = setup();
+        sym_table
+            .add_label("odd".to_string(), config::TEXT_BASE + 3)
+            .unwrap();
+        let statements = vec![Statement {
+            kind: StatementKind::Instruction(
+                "jal".to_string(),
+                vec![Operand::Register(1), Operand::Label("odd".to_string())],
+            ),
+            line: 1,
+        }];
+        let errors = assembler.assemble(&statements, &sym_table).unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("must be a multiple of 2"));
     }
 
     #[test]
