@@ -69,3 +69,129 @@ impl Session {
         self.processor.drain_uart()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RA: usize = 1;
+    const T0: usize = 5;
+    const A0: usize = 10;
+    const A1: usize = 11;
+
+    // Assemble `source`, execute `steps` instructions, and return the session for
+    // assertions on architectural state. These end-to-end tests are what catch bugs
+    // that statement-level pseudo/encoder tests cannot (e.g. la expanding to
+    // pc + symbol instead of symbol).
+    fn compile_and_run(source: &str, steps: usize) -> Session {
+        let mut session = Session::new();
+        if let Err(e) = session.load_source(source) {
+            let msg = match e {
+                CompileError::Lex(e) => format!("lex error at line {}: {}", e.line, e),
+                CompileError::Parse(e) => format!("parse error at line {}: {}", e.line, e),
+                CompileError::Pseudo(msg) => format!("pseudo error: {}", msg),
+                CompileError::Symbol(msg) => format!("symbol error: {}", msg),
+                CompileError::Assemble(errors) => errors
+                    .iter()
+                    .map(|e| format!("asm error at line {}: {}", e.line, e.message))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            };
+            panic!("compilation failed:\n{}", msg);
+        }
+        for i in 0..steps {
+            session
+                .step()
+                .unwrap_or_else(|e| panic!("step {} failed: {:?}", i + 1, e));
+        }
+        session
+    }
+
+    #[test]
+    fn test_la_loads_exact_symbol_address() {
+        let session = compile_and_run(
+            ".data\nmsg: .word 1\n.text\nstart: la a0, msg\n",
+            2, // auipc + addi
+        );
+        assert_eq!(session.processor.registers()[A0], config::DATA_BASE);
+    }
+
+    #[test]
+    fn test_la_backward_label_with_negative_pcrel_hi20() {
+        // Put the target >2048 bytes behind the la so %pcrel_hi resolves to a
+        // negative hi20, which auipc must encode (lui/auipc accept negative values).
+        let nops = "nop\n".repeat(600);
+        let source = format!(".text\ntarget: {}la a0, target\n", nops);
+        let session = compile_and_run(&source, 600 + 2);
+        assert_eq!(session.processor.registers()[A0], config::TEXT_BASE);
+    }
+
+    #[test]
+    fn test_call_reaches_target_and_links_ra() {
+        // call occupies 8 bytes (auipc + jalr), nop is at +8, func at +12.
+        let session = compile_and_run(
+            ".text\nstart: call func\nnop\nfunc: nop\n",
+            2, // auipc + jalr
+        );
+        assert_eq!(session.processor.pc(), config::TEXT_BASE + 12);
+        assert_eq!(
+            session.processor.registers()[RA],
+            config::TEXT_BASE + 8,
+            "ra must point at the instruction after the call"
+        );
+    }
+
+    #[test]
+    fn test_tail_reaches_target_without_linking() {
+        let session = compile_and_run(".text\nstart: tail func\nnop\nfunc: nop\n", 2);
+        assert_eq!(session.processor.pc(), config::TEXT_BASE + 12);
+        assert_eq!(session.processor.registers()[RA], 0);
+    }
+
+    #[test]
+    fn test_load_global_pseudo_reads_data_word() {
+        let session = compile_and_run(
+            ".data\nval: .word 0x12345678\n.text\nstart: lw a1, val\n",
+            2, // auipc + lw
+        );
+        assert_eq!(session.processor.registers()[A1], 0x12345678);
+    }
+
+    #[test]
+    fn test_store_global_pseudo_writes_data_word() {
+        let session = compile_and_run(
+            ".data\nval: .word 0\n.text\nstart: li a0, 42\nsw a0, val, t0\n",
+            3, // addi + auipc + sw
+        );
+        assert_eq!(
+            session.processor.read_memory_word(config::DATA_BASE),
+            Ok(42)
+        );
+        // The scratch register holds the auipc result, not zero.
+        assert_ne!(session.processor.registers()[T0], 0);
+    }
+
+    #[test]
+    fn test_li_large_negative_value() {
+        // hi20 of -2049 is -1: requires lui to accept negative 20-bit immediates.
+        let session = compile_and_run(".text\nstart: li a0, -2049\n", 2);
+        assert_eq!(session.processor.registers()[A0], -2049i32 as u32);
+    }
+
+    #[test]
+    fn test_li_value_with_bit31_set() {
+        let session = compile_and_run(".text\nstart: li a0, 0xDEADBEEF\n", 2);
+        assert_eq!(session.processor.registers()[A0], 0xDEADBEEF);
+    }
+
+    #[test]
+    fn test_explicit_pcrel_modifiers_in_source() {
+        // Hand-written equivalent of la: the %pcrel_lo pairs with the auipc on the
+        // previous line.
+        let session = compile_and_run(
+            ".data\nmsg: .word 1\n.text\nstart: auipc a0, %pcrel_hi(msg)\naddi a0, a0, %pcrel_lo(msg)\n",
+            2,
+        );
+        assert_eq!(session.processor.registers()[A0], config::DATA_BASE);
+    }
+}

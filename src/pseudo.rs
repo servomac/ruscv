@@ -26,52 +26,248 @@ use OutOp::{Imm, In, Reg};
 
 static PSEUDO_TABLE: &[(&str, Expansion)] = &[
     // Zero-operand aliases
-    ("nop",   Fixed { base: "addi",   arity: 0, out: &[Reg(0), Reg(0), Imm(0)]  }),
-    ("ret",   Fixed { base: "jalr",   arity: 0, out: &[Reg(0), Reg(1), Imm(0)]  }),
+    (
+        "nop",
+        Fixed {
+            base: "addi",
+            arity: 0,
+            out: &[Reg(0), Reg(0), Imm(0)],
+        },
+    ),
+    (
+        "ret",
+        Fixed {
+            base: "jalr",
+            arity: 0,
+            out: &[Reg(0), Reg(1), Imm(0)],
+        },
+    ),
     // Two-register arithmetic / logical aliases
-    ("mv",    Fixed { base: "addi",   arity: 2, out: &[In(0), In(1), Imm(0)]    }),
-    ("not",   Fixed { base: "xori",   arity: 2, out: &[In(0), In(1), Imm(-1)]   }),
-    ("neg",   Fixed { base: "sub",    arity: 2, out: &[In(0), Reg(0), In(1)]    }),
-    ("seqz",  Fixed { base: "sltiu",  arity: 2, out: &[In(0), In(1), Imm(1)]    }),
-    ("snez",  Fixed { base: "sltu",   arity: 2, out: &[In(0), Reg(0), In(1)]    }),
-    ("sltz",  Fixed { base: "slti",   arity: 2, out: &[In(0), In(1), Imm(0)]    }),
-    ("sgtz",  Fixed { base: "slt",    arity: 2, out: &[In(0), Reg(0), In(1)]    }),
+    (
+        "mv",
+        Fixed {
+            base: "addi",
+            arity: 2,
+            out: &[In(0), In(1), Imm(0)],
+        },
+    ),
+    (
+        "not",
+        Fixed {
+            base: "xori",
+            arity: 2,
+            out: &[In(0), In(1), Imm(-1)],
+        },
+    ),
+    (
+        "neg",
+        Fixed {
+            base: "sub",
+            arity: 2,
+            out: &[In(0), Reg(0), In(1)],
+        },
+    ),
+    (
+        "seqz",
+        Fixed {
+            base: "sltiu",
+            arity: 2,
+            out: &[In(0), In(1), Imm(1)],
+        },
+    ),
+    (
+        "snez",
+        Fixed {
+            base: "sltu",
+            arity: 2,
+            out: &[In(0), Reg(0), In(1)],
+        },
+    ),
+    (
+        "sltz",
+        Fixed {
+            base: "slti",
+            arity: 2,
+            out: &[In(0), In(1), Imm(0)],
+        },
+    ),
+    (
+        "sgtz",
+        Fixed {
+            base: "slt",
+            arity: 2,
+            out: &[In(0), Reg(0), In(1)],
+        },
+    ),
     // Branch-compare-zero: (rs, target) → base_branch rs, x0, target
-    ("beqz",  Fixed { base: "beq",    arity: 2, out: &[In(0), Reg(0), In(1)]    }),
-    ("bnez",  Fixed { base: "bne",    arity: 2, out: &[In(0), Reg(0), In(1)]    }),
-    ("bgez",  Fixed { base: "bge",    arity: 2, out: &[In(0), Reg(0), In(1)]    }),
-    ("bltz",  Fixed { base: "blt",    arity: 2, out: &[In(0), Reg(0), In(1)]    }),
-    ("blez",  Fixed { base: "bge",    arity: 2, out: &[Reg(0), In(0), In(1)]    }),
-    ("bgtz",  Fixed { base: "blt",    arity: 2, out: &[Reg(0), In(0), In(1)]    }),
+    (
+        "beqz",
+        Fixed {
+            base: "beq",
+            arity: 2,
+            out: &[In(0), Reg(0), In(1)],
+        },
+    ),
+    (
+        "bnez",
+        Fixed {
+            base: "bne",
+            arity: 2,
+            out: &[In(0), Reg(0), In(1)],
+        },
+    ),
+    (
+        "bgez",
+        Fixed {
+            base: "bge",
+            arity: 2,
+            out: &[In(0), Reg(0), In(1)],
+        },
+    ),
+    (
+        "bltz",
+        Fixed {
+            base: "blt",
+            arity: 2,
+            out: &[In(0), Reg(0), In(1)],
+        },
+    ),
+    (
+        "blez",
+        Fixed {
+            base: "bge",
+            arity: 2,
+            out: &[Reg(0), In(0), In(1)],
+        },
+    ),
+    (
+        "bgtz",
+        Fixed {
+            base: "blt",
+            arity: 2,
+            out: &[Reg(0), In(0), In(1)],
+        },
+    ),
     // Branch aliases: operand swap maps the pseudo-condition to a real branch
-    ("bgt",   Fixed { base: "blt",    arity: 3, out: &[In(1), In(0), In(2)]     }),
-    ("ble",   Fixed { base: "bge",    arity: 3, out: &[In(1), In(0), In(2)]     }),
-    ("bgtu",  Fixed { base: "bltu",   arity: 3, out: &[In(1), In(0), In(2)]     }),
-    ("bleu",  Fixed { base: "bgeu",   arity: 3, out: &[In(1), In(0), In(2)]     }),
+    (
+        "bgt",
+        Fixed {
+            base: "blt",
+            arity: 3,
+            out: &[In(1), In(0), In(2)],
+        },
+    ),
+    (
+        "ble",
+        Fixed {
+            base: "bge",
+            arity: 3,
+            out: &[In(1), In(0), In(2)],
+        },
+    ),
+    (
+        "bgtu",
+        Fixed {
+            base: "bltu",
+            arity: 3,
+            out: &[In(1), In(0), In(2)],
+        },
+    ),
+    (
+        "bleu",
+        Fixed {
+            base: "bgeu",
+            arity: 3,
+            out: &[In(1), In(0), In(2)],
+        },
+    ),
     // Jump shorthands
-    ("j",     Fixed { base: "jal",    arity: 1, out: &[Reg(0), In(0)]           }),
-    ("jr",    Fixed { base: "jalr",   arity: 1, out: &[Reg(0), In(0), Imm(0)]   }),
+    (
+        "j",
+        Fixed {
+            base: "jal",
+            arity: 1,
+            out: &[Reg(0), In(0)],
+        },
+    ),
+    (
+        "jr",
+        Fixed {
+            base: "jalr",
+            arity: 1,
+            out: &[Reg(0), In(0), Imm(0)],
+        },
+    ),
     // CSR aliases
-    ("csrr",  Fixed { base: "csrrs",  arity: 2, out: &[In(0), In(1), Reg(0)]    }),
-    ("csrw",  Fixed { base: "csrrw",  arity: 2, out: &[Reg(0), In(0), In(1)]    }),
-    ("csrwi", Fixed { base: "csrrwi", arity: 2, out: &[Reg(0), In(0), In(1)]    }),
-    ("csrs",  Fixed { base: "csrrs",  arity: 2, out: &[Reg(0), In(0), In(1)]    }),
-    ("csrc",  Fixed { base: "csrrc",  arity: 2, out: &[Reg(0), In(0), In(1)]    }),
-    ("csrsi", Fixed { base: "csrrsi", arity: 2, out: &[Reg(0), In(0), In(1)]    }),
-    ("csrci", Fixed { base: "csrrci", arity: 2, out: &[Reg(0), In(0), In(1)]    }),
+    (
+        "csrr",
+        Fixed {
+            base: "csrrs",
+            arity: 2,
+            out: &[In(0), In(1), Reg(0)],
+        },
+    ),
+    (
+        "csrw",
+        Fixed {
+            base: "csrrw",
+            arity: 2,
+            out: &[Reg(0), In(0), In(1)],
+        },
+    ),
+    (
+        "csrwi",
+        Fixed {
+            base: "csrrwi",
+            arity: 2,
+            out: &[Reg(0), In(0), In(1)],
+        },
+    ),
+    (
+        "csrs",
+        Fixed {
+            base: "csrrs",
+            arity: 2,
+            out: &[Reg(0), In(0), In(1)],
+        },
+    ),
+    (
+        "csrc",
+        Fixed {
+            base: "csrrc",
+            arity: 2,
+            out: &[Reg(0), In(0), In(1)],
+        },
+    ),
+    (
+        "csrsi",
+        Fixed {
+            base: "csrrsi",
+            arity: 2,
+            out: &[Reg(0), In(0), In(1)],
+        },
+    ),
+    (
+        "csrci",
+        Fixed {
+            base: "csrrci",
+            arity: 2,
+            out: &[Reg(0), In(0), In(1)],
+        },
+    ),
     // Complex expansions that need runtime logic
-    ("li",    Custom(expand_li)),
-    ("la",    Custom(expand_la)),
-    ("call",  Custom(expand_call)),
-    ("tail",  Custom(expand_tail)),
-    ("lb",    Custom(expand_load_pseudo)),
-    ("lh",    Custom(expand_load_pseudo)),
-    ("lw",    Custom(expand_load_pseudo)),
-    ("sb",    Custom(expand_store_pseudo)),
-    ("sh",    Custom(expand_store_pseudo)),
-    ("sw",    Custom(expand_store_pseudo)),
-    ("jal",   Custom(expand_jal)),
-    ("jalr",  Custom(expand_jalr)),
+    ("li", Custom(expand_li)),
+    ("la", Custom(expand_la)),
+    ("call", Custom(expand_call)),
+    ("tail", Custom(expand_tail)),
+    ("lb", Custom(expand_load_pseudo)),
+    ("lh", Custom(expand_load_pseudo)),
+    ("lw", Custom(expand_load_pseudo)),
+    ("sb", Custom(expand_store_pseudo)),
+    ("sh", Custom(expand_store_pseudo)),
+    ("sw", Custom(expand_store_pseudo)),
+    ("jal", Custom(expand_jal)),
+    ("jalr", Custom(expand_jalr)),
 ];
 
 pub fn expand(statements: Vec<Statement>) -> Result<Vec<Statement>, String> {
@@ -154,7 +350,7 @@ fn expand_li(_name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<Statemen
             return Err(format!(
                 "Invalid first operand for 'li': expected a register, got {}",
                 rd
-            ))
+            ));
         }
     };
     let imm = match imm_op {
@@ -163,7 +359,7 @@ fn expand_li(_name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<Statemen
             return Err(format!(
                 "Invalid second operand for 'li': expected an immediate, got {}",
                 imm_op
-            ))
+            ));
         }
     };
 
@@ -207,21 +403,22 @@ fn expand_li(_name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<Statemen
 
 fn expand_la(_name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<Statement>, String> {
     let [rd, symbol] = take_ops::<2>("la", ops)?;
-    let rd_reg =
-        match rd {
-            Operand::Register(n) => n,
-            _ => return Err(format!(
+    let rd_reg = match rd {
+        Operand::Register(n) => n,
+        _ => {
+            return Err(format!(
                 "Invalid first operand for 'la' pseudo-instruction. Expected a register, got {}",
                 rd
-            )),
-        };
+            ));
+        }
+    };
     let symbol = match symbol {
         Operand::Label(s) => s,
         _ => {
             return Err(format!(
                 "Invalid second operand for 'la' pseudo-instruction. Expected a label, got {}",
                 symbol
-            ))
+            ));
         }
     };
     Ok(vec![
@@ -230,7 +427,7 @@ fn expand_la(_name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<Statemen
                 "auipc".to_string(),
                 vec![
                     Operand::Register(rd_reg),
-                    Operand::Modifier(ModifierKind::Hi, symbol.clone()),
+                    Operand::Modifier(ModifierKind::PcrelHi, symbol.clone()),
                 ],
             ),
             line,
@@ -241,7 +438,7 @@ fn expand_la(_name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<Statemen
                 vec![
                     Operand::Register(rd_reg),
                     Operand::Register(rd_reg),
-                    Operand::Modifier(ModifierKind::Lo, symbol),
+                    Operand::Modifier(ModifierKind::PcrelLo, symbol),
                 ],
             ),
             line,
@@ -285,7 +482,7 @@ fn expand_tail(_name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<Statem
     ])
 }
 
-// lb/lh/lw rd, symbol  (pseudo)  →  auipc rd, %hi(symbol) + l{b|h|w} rd, %lo(symbol)(rd)
+// lb/lh/lw rd, symbol  (pseudo)  →  auipc rd, %pcrel_hi(symbol) + l{b|h|w} rd, %pcrel_lo(symbol)(rd)
 // lb/lh/lw rd, offset(rs)        →  pass through as base instruction
 fn expand_load_pseudo(
     name: &str,
@@ -299,14 +496,15 @@ fn expand_load_pseudo(
         }]);
     }
     let [rd, symbol] = take_ops::<2>(name, ops)?;
-    let rd_reg =
-        match rd {
-            Operand::Register(n) => n,
-            _ => return Err(format!(
+    let rd_reg = match rd {
+        Operand::Register(n) => n,
+        _ => {
+            return Err(format!(
                 "Invalid first operand for '{}' pseudo-instruction. Expected a register, got {}",
                 name, rd
-            )),
-        };
+            ));
+        }
+    };
     let Operand::Label(symbol) = symbol else {
         unreachable!()
     };
@@ -316,7 +514,7 @@ fn expand_load_pseudo(
                 "auipc".to_string(),
                 vec![
                     Operand::Register(rd_reg),
-                    Operand::Modifier(ModifierKind::Hi, symbol.clone()),
+                    Operand::Modifier(ModifierKind::PcrelHi, symbol.clone()),
                 ],
             ),
             line,
@@ -327,7 +525,7 @@ fn expand_load_pseudo(
                 vec![
                     Operand::Register(rd_reg),
                     Operand::Memory {
-                        offset: MemoryOffset::Modifier(ModifierKind::Lo, symbol),
+                        offset: MemoryOffset::Modifier(ModifierKind::PcrelLo, symbol),
                         reg: rd_reg,
                     },
                 ],
@@ -337,7 +535,7 @@ fn expand_load_pseudo(
     ])
 }
 
-// sb/sh/sw rd, symbol, rt  (pseudo)  →  auipc rt, %hi(symbol) + s{b|h|w} rd, %lo(symbol)(rt)
+// sb/sh/sw rd, symbol, rt  (pseudo)  →  auipc rt, %pcrel_hi(symbol) + s{b|h|w} rd, %pcrel_lo(symbol)(rt)
 // sb/sh/sw rd, offset(rs)            →  pass through as base instruction
 fn expand_store_pseudo(
     name: &str,
@@ -351,32 +549,34 @@ fn expand_store_pseudo(
         }]);
     }
     let [rd, symbol, rt] = take_ops::<3>(name, ops)?;
-    let rd_reg =
-        match rd {
-            Operand::Register(n) => n,
-            _ => return Err(format!(
+    let rd_reg = match rd {
+        Operand::Register(n) => n,
+        _ => {
+            return Err(format!(
                 "Invalid first operand for '{}' pseudo-instruction. Expected a register, got {}",
                 name, rd
-            )),
-        };
+            ));
+        }
+    };
     let Operand::Label(symbol) = symbol else {
         unreachable!()
     };
-    let rt_reg =
-        match rt {
-            Operand::Register(n) => n,
-            _ => return Err(format!(
+    let rt_reg = match rt {
+        Operand::Register(n) => n,
+        _ => {
+            return Err(format!(
                 "Invalid third operand for '{}' pseudo-instruction. Expected a register, got {}",
                 name, rt
-            )),
-        };
+            ));
+        }
+    };
     Ok(vec![
         Statement {
             kind: StatementKind::Instruction(
                 "auipc".to_string(),
                 vec![
                     Operand::Register(rt_reg),
-                    Operand::Modifier(ModifierKind::Hi, symbol.clone()),
+                    Operand::Modifier(ModifierKind::PcrelHi, symbol.clone()),
                 ],
             ),
             line,
@@ -387,7 +587,7 @@ fn expand_store_pseudo(
                 vec![
                     Operand::Register(rd_reg),
                     Operand::Memory {
-                        offset: MemoryOffset::Modifier(ModifierKind::Lo, symbol),
+                        offset: MemoryOffset::Modifier(ModifierKind::PcrelLo, symbol),
                         reg: rt_reg,
                     },
                 ],
@@ -444,13 +644,15 @@ fn expand_jalr(name: &str, ops: Vec<Operand>, line: usize) -> Result<Vec<Stateme
 
 fn split_hi_lo(offset: Operand, pseudo_name: &str) -> Result<(Operand, Operand), String> {
     match offset {
+        // An immediate splits as-is; paired with auipc it acts as an offset from the
+        // call site, not an absolute address.
         Operand::Immediate(imm) => Ok((
             Operand::Immediate(((imm as i64 + 0x800) >> 12) as i32),
             Operand::Immediate((imm << 20) >> 20),
         )),
         Operand::Label(label) => Ok((
-            Operand::Modifier(ModifierKind::Hi, label.clone()),
-            Operand::Modifier(ModifierKind::Lo, label),
+            Operand::Modifier(ModifierKind::PcrelHi, label.clone()),
+            Operand::Modifier(ModifierKind::PcrelLo, label),
         )),
         _ => Err(format!(
             "Invalid operand for '{}': expected an immediate or label, got {}",
@@ -508,7 +710,7 @@ mod tests {
                 "auipc".to_string(),
                 vec![
                     Operand::Register(1),
-                    Operand::Modifier(ModifierKind::Hi, "label".to_string())
+                    Operand::Modifier(ModifierKind::PcrelHi, "label".to_string())
                 ]
             )
         );
@@ -519,7 +721,7 @@ mod tests {
                 vec![
                     Operand::Register(1),
                     Operand::Register(1),
-                    Operand::Modifier(ModifierKind::Lo, "label".to_string())
+                    Operand::Modifier(ModifierKind::PcrelLo, "label".to_string())
                 ]
             )
         );
@@ -630,7 +832,7 @@ mod tests {
                 "auipc".to_string(),
                 vec![
                     Operand::Register(3),
-                    Operand::Modifier(ModifierKind::Hi, "label".to_string())
+                    Operand::Modifier(ModifierKind::PcrelHi, "label".to_string())
                 ]
             )
         );
@@ -641,7 +843,7 @@ mod tests {
                 vec![
                     Operand::Register(3),
                     Operand::Memory {
-                        offset: MemoryOffset::Modifier(ModifierKind::Lo, "label".to_string()),
+                        offset: MemoryOffset::Modifier(ModifierKind::PcrelLo, "label".to_string()),
                         reg: 3
                     }
                 ]
@@ -683,7 +885,7 @@ mod tests {
                 "auipc".to_string(),
                 vec![
                     Operand::Register(4),
-                    Operand::Modifier(ModifierKind::Hi, "label".to_string())
+                    Operand::Modifier(ModifierKind::PcrelHi, "label".to_string())
                 ]
             )
         );
@@ -694,7 +896,7 @@ mod tests {
                 vec![
                     Operand::Register(3),
                     Operand::Memory {
-                        offset: MemoryOffset::Modifier(ModifierKind::Lo, "label".to_string()),
+                        offset: MemoryOffset::Modifier(ModifierKind::PcrelLo, "label".to_string()),
                         reg: 4
                     }
                 ]
@@ -964,7 +1166,7 @@ mod tests {
                 "auipc".to_string(),
                 vec![
                     Operand::Register(1),
-                    Operand::Modifier(ModifierKind::Hi, "loop".to_string())
+                    Operand::Modifier(ModifierKind::PcrelHi, "loop".to_string())
                 ]
             )
         );
@@ -975,7 +1177,7 @@ mod tests {
                 vec![
                     Operand::Register(1),
                     Operand::Register(1),
-                    Operand::Modifier(ModifierKind::Lo, "loop".to_string())
+                    Operand::Modifier(ModifierKind::PcrelLo, "loop".to_string())
                 ]
             )
         );
@@ -1028,7 +1230,7 @@ mod tests {
                 "auipc".to_string(),
                 vec![
                     Operand::Register(6),
-                    Operand::Modifier(ModifierKind::Hi, "loop".to_string())
+                    Operand::Modifier(ModifierKind::PcrelHi, "loop".to_string())
                 ]
             )
         );
@@ -1039,7 +1241,7 @@ mod tests {
                 vec![
                     Operand::Register(0),
                     Operand::Register(6),
-                    Operand::Modifier(ModifierKind::Lo, "loop".to_string())
+                    Operand::Modifier(ModifierKind::PcrelLo, "loop".to_string())
                 ]
             )
         );

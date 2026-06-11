@@ -100,6 +100,8 @@ impl fmt::Display for MemoryOffset {
                 let kind_str = match kind {
                     ModifierKind::Hi => "hi",
                     ModifierKind::Lo => "lo",
+                    ModifierKind::PcrelHi => "pcrel_hi",
+                    ModifierKind::PcrelLo => "pcrel_lo",
                 };
                 write!(f, "%{}({})", kind_str, symbol)
             }
@@ -128,6 +130,8 @@ impl fmt::Display for Operand {
                 let kind_str = match kind {
                     ModifierKind::Hi => "hi",
                     ModifierKind::Lo => "lo",
+                    ModifierKind::PcrelHi => "pcrel_hi",
+                    ModifierKind::PcrelLo => "pcrel_lo",
                 };
                 write!(f, "%{}({})", kind_str, symbol)
             }
@@ -309,7 +313,7 @@ impl Parser {
                 return Err(ParseError {
                     line,
                     message: format!("Unexpected token: {:?}", current_token),
-                })
+                });
             }
         };
 
@@ -339,7 +343,7 @@ impl Parser {
                     // consume the register inside the parentheses
                     let reg_token = self.consume(
                         &Token::Register(0),
-                        "A register was expected inside parentheses for memory addressing"
+                        "A register was expected inside parentheses for memory addressing",
                     )?;
 
                     let reg = match reg_token {
@@ -347,9 +351,15 @@ impl Parser {
                         _ => unreachable!(),
                     };
 
-                    self.consume(&Token::RParenthesis, "Right parenthesis expected after base register")?;
+                    self.consume(
+                        &Token::RParenthesis,
+                        "Right parenthesis expected after base register",
+                    )?;
 
-                    Ok(Operand::Memory { offset: MemoryOffset::Immediate(imm), reg })
+                    Ok(Operand::Memory {
+                        offset: MemoryOffset::Immediate(imm),
+                        reg,
+                    })
                 } else {
                     Ok(Operand::Immediate(imm))
                 }
@@ -364,7 +374,7 @@ impl Parser {
                     // consume the register inside the parentheses
                     let reg_token = self.consume(
                         &Token::Register(0),
-                        "A register was expected inside parentheses for memory addressing"
+                        "A register was expected inside parentheses for memory addressing",
                     )?;
 
                     let reg = match reg_token {
@@ -372,9 +382,15 @@ impl Parser {
                         _ => unreachable!(),
                     };
 
-                    self.consume(&Token::RParenthesis, "Right parenthesis expected after base register")?;
+                    self.consume(
+                        &Token::RParenthesis,
+                        "Right parenthesis expected after base register",
+                    )?;
 
-                    Ok(Operand::Memory { offset: MemoryOffset::Label(label), reg })
+                    Ok(Operand::Memory {
+                        offset: MemoryOffset::Label(label),
+                        reg,
+                    })
                 } else {
                     Ok(Operand::Label(label))
                 }
@@ -390,7 +406,7 @@ impl Parser {
                     // consume the register inside the parentheses
                     let reg_token = self.consume(
                         &Token::Register(0),
-                        "A register was expected inside parentheses for memory addressing"
+                        "A register was expected inside parentheses for memory addressing",
                     )?;
 
                     let reg = match reg_token {
@@ -398,9 +414,15 @@ impl Parser {
                         _ => unreachable!(),
                     };
 
-                    self.consume(&Token::RParenthesis, "Right parenthesis expected after base register")?;
+                    self.consume(
+                        &Token::RParenthesis,
+                        "Right parenthesis expected after base register",
+                    )?;
 
-                    Ok(Operand::Memory { offset: MemoryOffset::Modifier(kind, symbol), reg })
+                    Ok(Operand::Memory {
+                        offset: MemoryOffset::Modifier(kind, symbol),
+                        reg,
+                    })
                 } else {
                     Ok(Operand::Modifier(kind, symbol))
                 }
@@ -408,7 +430,10 @@ impl Parser {
 
             _ => Err(ParseError {
                 line,
-                message: format!("An operand was expected (register, immediate or label), but was not found: {:?}", current_token),
+                message: format!(
+                    "An operand was expected (register, immediate or label), but was not found: {:?}",
+                    current_token
+                ),
             }),
         }
     }

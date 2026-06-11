@@ -209,28 +209,28 @@ fn encode_instruction(
         "and" => encode_r_type(0x33, 0x7, 0x00, ops),
 
         // I-type | Opcode: 0x13 for ALU, 0x03 for Loads, 0x67 for jalr
-        "addi" => encode_i_type(0x13, 0x0, ops, sym_table),
-        "slti" => encode_i_type(0x13, 0x2, ops, sym_table),
-        "sltiu" => encode_i_type(0x13, 0x3, ops, sym_table),
-        "xori" => encode_i_type(0x13, 0x4, ops, sym_table),
-        "ori" => encode_i_type(0x13, 0x6, ops, sym_table),
-        "andi" => encode_i_type(0x13, 0x7, ops, sym_table),
+        "addi" => encode_i_type(0x13, 0x0, ops, sym_table, current_pc),
+        "slti" => encode_i_type(0x13, 0x2, ops, sym_table, current_pc),
+        "sltiu" => encode_i_type(0x13, 0x3, ops, sym_table, current_pc),
+        "xori" => encode_i_type(0x13, 0x4, ops, sym_table, current_pc),
+        "ori" => encode_i_type(0x13, 0x6, ops, sym_table, current_pc),
+        "andi" => encode_i_type(0x13, 0x7, ops, sym_table, current_pc),
         "slli" => encode_i_shift(0x13, 0x1, 0x00, ops), // Special: uses shift amount
         "srli" => encode_i_shift(0x13, 0x5, 0x00, ops),
         "srai" => encode_i_shift(0x13, 0x5, 0x20, ops),
 
-        "lb" => encode_i_type(0x03, 0x0, ops, sym_table),
-        "lh" => encode_i_type(0x03, 0x1, ops, sym_table),
-        "lw" => encode_i_type(0x03, 0x2, ops, sym_table),
-        "lbu" => encode_i_type(0x03, 0x4, ops, sym_table),
-        "lhu" => encode_i_type(0x03, 0x5, ops, sym_table),
+        "lb" => encode_i_type(0x03, 0x0, ops, sym_table, current_pc),
+        "lh" => encode_i_type(0x03, 0x1, ops, sym_table, current_pc),
+        "lw" => encode_i_type(0x03, 0x2, ops, sym_table, current_pc),
+        "lbu" => encode_i_type(0x03, 0x4, ops, sym_table, current_pc),
+        "lhu" => encode_i_type(0x03, 0x5, ops, sym_table, current_pc),
 
-        "jalr" => encode_i_type(0x67, 0x0, ops, sym_table),
+        "jalr" => encode_i_type(0x67, 0x0, ops, sym_table, current_pc),
 
         // S-type | Opcode: 0x23
-        "sb" => encode_s_type(0x23, 0x0, ops, sym_table),
-        "sh" => encode_s_type(0x23, 0x1, ops, sym_table),
-        "sw" => encode_s_type(0x23, 0x2, ops, sym_table),
+        "sb" => encode_s_type(0x23, 0x0, ops, sym_table, current_pc),
+        "sh" => encode_s_type(0x23, 0x1, ops, sym_table, current_pc),
+        "sw" => encode_s_type(0x23, 0x2, ops, sym_table, current_pc),
 
         // B-type | Opcode: 0x63
         "beq" => encode_b_type(0x63, 0x0, ops, sym_table, current_pc),
@@ -241,8 +241,8 @@ fn encode_instruction(
         "bgeu" => encode_b_type(0x63, 0x7, ops, sym_table, current_pc),
 
         // U-type | Opcode: 0x37 lui, 0x17 auipc
-        "lui" => encode_u_type(0x37, ops, sym_table),
-        "auipc" => encode_u_type(0x17, ops, sym_table),
+        "lui" => encode_u_type(0x37, ops, sym_table, current_pc),
+        "auipc" => encode_u_type(0x17, ops, sym_table, current_pc),
 
         // J-type | Opcode: 0x6F
         "jal" => encode_j_type(0x6F, ops, sym_table, current_pc),
@@ -329,7 +329,12 @@ fn encode_csr_imm(funct3: u8, ops: &[Operand]) -> Result<u32, String> {
 }
 
 fn encode_r_type(opcode: u8, funct3: u8, funct7: u8, ops: &[Operand]) -> Result<u32, String> {
-    if let [Operand::Register(rd), Operand::Register(rs1), Operand::Register(rs2)] = ops {
+    if let [
+        Operand::Register(rd),
+        Operand::Register(rs1),
+        Operand::Register(rs2),
+    ] = ops
+    {
         Ok(((funct7 as u32) << 25)
             | ((*rs2 as u32) << 20)
             | ((*rs1 as u32) << 15)
@@ -349,6 +354,7 @@ fn encode_i_type(
     funct3: u8,
     ops: &[Operand],
     sym_table: &SymbolTable,
+    current_pc: u32,
 ) -> Result<u32, String> {
     let (rd, rs1, base_op) = match (opcode, ops) {
         // load: rd, offset(rs1)
@@ -360,7 +366,7 @@ fn encode_i_type(
         _ => return Err("Invalid operands for I-type instruction".to_string()),
     };
 
-    let imm_val = resolve_any_immediate(base_op, sym_table)?;
+    let imm_val = resolve_any_immediate(base_op, sym_table, current_pc)?;
 
     if imm_val < -2048 || imm_val > 2047 {
         return Err(format!(
@@ -378,7 +384,12 @@ fn encode_i_type(
 }
 
 fn encode_i_shift(opcode: u8, funct3: u8, funct7: u8, ops: &[Operand]) -> Result<u32, String> {
-    if let [Operand::Register(rd), Operand::Register(rs1), Operand::Immediate(shamt)] = ops {
+    if let [
+        Operand::Register(rd),
+        Operand::Register(rs1),
+        Operand::Immediate(shamt),
+    ] = ops
+    {
         if *shamt < 0 || *shamt > 31 {
             return Err(format!("Shift amount {} out of range (0-31)", shamt));
         }
@@ -401,11 +412,12 @@ fn encode_s_type(
     funct3: u8,
     ops: &[Operand],
     sym_table: &SymbolTable,
+    current_pc: u32,
 ) -> Result<u32, String> {
     // Note: The usual order in RISC-V is sw rs2, offset(rs1)
     if let [Operand::Register(rs2), Operand::Memory { offset, reg }] = ops {
         // Resolve the immediate (can be label or number)
-        let imm_val = resolve_memory_offset(offset, sym_table)?;
+        let imm_val = resolve_memory_offset(offset, sym_table, current_pc)?;
 
         if imm_val < -2048 || imm_val > 2047 {
             return Err(format!(
@@ -431,18 +443,26 @@ fn encode_s_type(
     }
 }
 
-fn resolve_memory_offset(offset: &MemoryOffset, sym_table: &SymbolTable) -> Result<i32, String> {
+fn resolve_memory_offset(
+    offset: &MemoryOffset,
+    sym_table: &SymbolTable,
+    current_pc: u32,
+) -> Result<i32, String> {
     match offset {
         MemoryOffset::Immediate(val) => Ok(*val),
         MemoryOffset::Label(name) => sym_table
             .get_address(name)
             .map(|addr| addr as i32)
             .ok_or_else(|| format!("Unknown label '{}'", name)),
-        MemoryOffset::Modifier(kind, name) => resolve_modifier(kind, name, sym_table),
+        MemoryOffset::Modifier(kind, name) => resolve_modifier(kind, name, sym_table, current_pc),
     }
 }
 
-fn resolve_any_immediate(op: &Operand, sym_table: &SymbolTable) -> Result<i32, String> {
+fn resolve_any_immediate(
+    op: &Operand,
+    sym_table: &SymbolTable,
+    current_pc: u32,
+) -> Result<i32, String> {
     match op {
         // For example in addi x1, x2, 10
         Operand::Immediate(val) => Ok(*val),
@@ -454,10 +474,10 @@ fn resolve_any_immediate(op: &Operand, sym_table: &SymbolTable) -> Result<i32, S
             .ok_or_else(|| format!("Unknown label '{}'", name)),
 
         // For example in lw x1, 4(x2) o lw x1, symbol(x2)
-        Operand::Memory { offset, .. } => resolve_memory_offset(offset, sym_table),
+        Operand::Memory { offset, .. } => resolve_memory_offset(offset, sym_table, current_pc),
 
         // For example in addi x1, x2, %hi(symbol)
-        Operand::Modifier(kind, name) => resolve_modifier(kind, name, sym_table),
+        Operand::Modifier(kind, name) => resolve_modifier(kind, name, sym_table, current_pc),
 
         _ => Err("This operand do not contain a numeric value or a label".to_string()),
     }
@@ -467,6 +487,7 @@ fn resolve_modifier(
     kind: &ModifierKind,
     name: &str,
     sym_table: &SymbolTable,
+    current_pc: u32,
 ) -> Result<i32, String> {
     let addr = sym_table
         .get_address(name)
@@ -479,6 +500,20 @@ fn resolve_modifier(
             Ok(((addr as i64 + 0x800) >> 12) as i32)
         }
         ModifierKind::Lo => Ok(((addr << 20) as i32) >> 20),
+        ModifierKind::PcrelHi => {
+            // %pcrel_hi(addr) = ((addr - pc) + 0x800) >> 12, where pc is the address of
+            // the auipc instruction carrying this modifier.
+            let delta = addr.wrapping_sub(current_pc) as i32;
+            Ok(((delta as i64 + 0x800) >> 12) as i32)
+        }
+        ModifierKind::PcrelLo => {
+            // %pcrel_lo pairs with the auipc *immediately preceding* this instruction
+            // (the only form our pseudo expansions emit), so the delta is computed
+            // against current_pc - 4. GAS-style pairing via a label that points at the
+            // auipc is not supported.
+            let delta = addr.wrapping_sub(current_pc.wrapping_sub(4)) as i32;
+            Ok((delta << 20) >> 20)
+        }
     }
 }
 
@@ -489,7 +524,12 @@ fn encode_b_type(
     sym_table: &SymbolTable,
     current_pc: u32,
 ) -> Result<u32, String> {
-    if let [Operand::Register(rs1), Operand::Register(rs2), Operand::Label(label)] = ops {
+    if let [
+        Operand::Register(rs1),
+        Operand::Register(rs2),
+        Operand::Label(label),
+    ] = ops
+    {
         let label_addr = sym_table
             .get_address(label)
             .ok_or_else(|| format!("Unknown label '{}'", label))?;
@@ -528,16 +568,24 @@ fn encode_b_type(
     }
 }
 
-fn encode_u_type(opcode: u8, ops: &[Operand], sym_table: &SymbolTable) -> Result<u32, String> {
+fn encode_u_type(
+    opcode: u8,
+    ops: &[Operand],
+    sym_table: &SymbolTable,
+    current_pc: u32,
+) -> Result<u32, String> {
     if let [Operand::Register(rd), imm_op] = ops {
-        let val = resolve_any_immediate(imm_op, sym_table)?;
-        if val as u32 > 0xFFFFF {
+        let val = resolve_any_immediate(imm_op, sym_table, current_pc)?;
+        // Accept the unsigned 20-bit range plus negative hi20 values, which the li/la
+        // hi/lo splits legitimately produce (e.g. lui x1, -1 for li x1, -2049). The
+        // hardware field keeps only 20 bits either way.
+        if val > 0xFFFFF || val < -(1 << 19) {
             return Err(format!(
-                "Immediate value {} out of range for 20-bit U-type field (0..=0xFFFFF)",
+                "Immediate value {} out of range for 20-bit U-type field (-0x80000..=0xFFFFF)",
                 val
             ));
         }
-        let imm_u32 = val as u32;
+        let imm_u32 = (val as u32) & 0xFFFFF;
         Ok((imm_u32 << 12) | ((*rd as u32) << 7) | (opcode as u32))
     } else {
         Err(
@@ -554,7 +602,7 @@ fn encode_j_type(
     current_pc: u32,
 ) -> Result<u32, String> {
     if let [Operand::Register(rd), imm_op] = ops {
-        let val = resolve_any_immediate(imm_op, sym_table)?;
+        let val = resolve_any_immediate(imm_op, sym_table, current_pc)?;
         let offset = (val as i32) - (current_pc as i32);
 
         if offset < -1048576 || offset > 1048574 {
@@ -630,7 +678,7 @@ fn emit_data_bytes(kind: &DirectiveKind, ops: &[Operand]) -> Result<Vec<u8>, Str
                     _ => {
                         return Err(
                             "Invalid operand for .ascii: expected string literal".to_string()
-                        )
+                        );
                     }
                 }
             }
@@ -645,7 +693,7 @@ fn emit_data_bytes(kind: &DirectiveKind, ops: &[Operand]) -> Result<Vec<u8>, Str
                     _ => {
                         return Err(
                             "Invalid operand for .asciz: expected string literal".to_string()
-                        )
+                        );
                     }
                 }
             }
@@ -1353,9 +1401,11 @@ mod tests {
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert_eq!(errors.len(), 1);
-        assert!(errors[0]
-            .message
-            .contains("out of range for 20-bit U-type field"));
+        assert!(
+            errors[0]
+                .message
+                .contains("out of range for 20-bit U-type field")
+        );
     }
 
     #[test]

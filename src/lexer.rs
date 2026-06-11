@@ -61,6 +61,8 @@ pub struct SpannedToken {
 pub enum ModifierKind {
     Hi,
     Lo,
+    PcrelHi,
+    PcrelLo,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -290,12 +292,14 @@ fn read_modifier(
     let kind = match kind_str.as_str() {
         "hi" => ModifierKind::Hi,
         "lo" => ModifierKind::Lo,
+        "pcrel_hi" => ModifierKind::PcrelHi,
+        "pcrel_lo" => ModifierKind::PcrelLo,
         other => {
             return Err(LexError::new(
                 line,
                 start_column,
                 LexErrorKind::UnknownModifier(other.to_string()),
-            ))
+            ));
         }
     };
 
@@ -355,7 +359,7 @@ fn read_string_literal(
                             line,
                             *column,
                             LexErrorKind::UnknownEscapeSequence(escaped_char),
-                        ))
+                        ));
                     }
                 }
             } else {
@@ -404,7 +408,7 @@ fn read_number(
                     line,
                     start_column,
                     LexErrorKind::UnexpectedChar('-'),
-                ))
+                ));
             }
         }
     } else {
@@ -526,7 +530,7 @@ fn read_number(
                     line,
                     start_column,
                     LexErrorKind::NumericOverflow(number_str),
-                ))
+                ));
             }
         }
     } else {
@@ -537,7 +541,7 @@ fn read_number(
                     line,
                     start_column,
                     LexErrorKind::NumericOverflow(number_str),
-                ))
+                ));
             }
         }
     };
@@ -865,7 +869,7 @@ mod tests {
 
         // Negative numbers are still restricted to i32 range
         let res = tokenize("-2147483649"); // i32::MIN - 1
-                                           // number_str in error kind does not include the '-' sign
+        // number_str in error kind does not include the '-' sign
         assert_eq!(
             res.unwrap_err(),
             LexError::new(
@@ -895,6 +899,23 @@ mod tests {
         assert_eq!(
             tokens[0].token,
             Token::Modifier(ModifierKind::Lo, "label".to_string())
+        );
+    }
+
+    #[test]
+    fn test_pcrel_hi_lo_modifier() {
+        let res = tokenize("%pcrel_hi(label)");
+        let tokens = res.expect("Should tokenize successfully");
+        assert_eq!(
+            tokens[0].token,
+            Token::Modifier(ModifierKind::PcrelHi, "label".to_string())
+        );
+
+        let res = tokenize("%pcrel_lo(label)");
+        let tokens = res.expect("Should tokenize successfully");
+        assert_eq!(
+            tokens[0].token,
+            Token::Modifier(ModifierKind::PcrelLo, "label".to_string())
         );
     }
 
