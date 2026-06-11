@@ -428,6 +428,31 @@ impl Parser {
                 }
             }
 
+            // GAS treats a bare `(reg)` memory operand as `0(reg)`.
+            Token::LParenthesis => {
+                self.advance(); // consume left parenthesis
+
+                let reg_token = self.consume(
+                    &Token::Register(0),
+                    "A register was expected inside parentheses for memory addressing",
+                )?;
+
+                let reg = match reg_token {
+                    Token::Register(r) => r,
+                    _ => unreachable!(),
+                };
+
+                self.consume(
+                    &Token::RParenthesis,
+                    "Right parenthesis expected after base register",
+                )?;
+
+                Ok(Operand::Memory {
+                    offset: MemoryOffset::Immediate(0),
+                    reg,
+                })
+            }
+
             _ => Err(ParseError {
                 line,
                 message: format!(
@@ -516,6 +541,25 @@ mod tests {
             )
         );
         assert_eq!(nodes[0].line, 1);
+    }
+
+    #[test]
+    fn test_bare_paren_memory_operand_parses_as_offset_zero() {
+        let nodes = parse("lw x1, (x5)");
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(
+            nodes[0].kind,
+            StatementKind::Instruction(
+                "lw".to_string(),
+                vec![
+                    Operand::Register(1),
+                    Operand::Memory {
+                        offset: MemoryOffset::Immediate(0),
+                        reg: 5
+                    },
+                ]
+            )
+        );
     }
 
     #[test]

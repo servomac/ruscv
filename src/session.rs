@@ -213,6 +213,17 @@ mod tests {
         assert_eq!(session.processor.registers()[A1], 0x8081);
     }
 
+    #[test]
+    fn test_bare_paren_memory_operand_loads_and_stores() {
+        // GAS accepts `(reg)` as `0(reg)`.
+        let session = compile_and_run(
+            ".data\nval: .word 99\n.text\nstart: la a0, val\nlw a1, (a0)\naddi t0, a1, 1\nsw t0, (a0)\nlw a1, (a0)\n",
+            6,
+        );
+        assert_eq!(session.processor.registers()[T0], 100);
+        assert_eq!(session.processor.registers()[A1], 100);
+    }
+
     // The assembler is fed from an interactive editor: garbage input must produce
     // a compile error, never a panic and never a multi-GB allocation.
     #[test]
