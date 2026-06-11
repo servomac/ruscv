@@ -201,6 +201,18 @@ mod tests {
         assert_eq!(session.processor.registers()[A0], config::DATA_BASE);
     }
 
+    #[test]
+    fn test_unsigned_load_global_pseudos() {
+        // 0x8081 has bit 7 and bit 15 set: lbu/lhu must zero-extend where
+        // lb/lh would sign-extend.
+        let session = compile_and_run(
+            ".data\nval: .word 0x8081\n.text\nstart: lbu a0, val\nlhu a1, val\n",
+            4,
+        );
+        assert_eq!(session.processor.registers()[A0], 0x81);
+        assert_eq!(session.processor.registers()[A1], 0x8081);
+    }
+
     // The assembler is fed from an interactive editor: garbage input must produce
     // a compile error, never a panic and never a multi-GB allocation.
     #[test]
