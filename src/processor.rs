@@ -187,6 +187,33 @@ fn register_platform_devices(
     );
 }
 
+// Copy ELF segment bytes to `addr`, erroring (never panicking) when the
+// segment lies outside [DRAM_BASE, DRAM_BASE + DRAM_SIZE) — e.g. a foreign or
+// crafted ELF with segments below 0x8000_0000 or overhanging the DRAM end.
+fn copy_segment_into_dram(dram: &mut [u8], addr: u32, data: &[u8]) -> Result<(), String> {
+    let offset = addr
+        .checked_sub(crate::config::DRAM_BASE)
+        .ok_or_else(|| {
+            format!(
+                "ELF segment at 0x{:08x} is below DRAM base 0x{:08x}",
+                addr,
+                crate::config::DRAM_BASE
+            )
+        })? as usize;
+    let end = offset
+        .checked_add(data.len())
+        .filter(|&end| end <= dram.len())
+        .ok_or_else(|| {
+            format!(
+                "ELF segment at 0x{:08x} ({} bytes) extends past the end of DRAM",
+                addr,
+                data.len()
+            )
+        })?;
+    dram[offset..end].copy_from_slice(data);
+    Ok(())
+}
+
 impl Processor {
     pub fn new() -> Self {
         let mut registers = [0; crate::config::NUM_REGISTERS];
@@ -217,7 +244,7 @@ impl Processor {
         }
     }
 
-    pub fn from_elf(image: &ElfImage) -> Self {
+    pub fn from_elf(image: &ElfImage) -> Result<Self, String> {
         let mut registers = [0; crate::config::NUM_REGISTERS];
         registers[2] = crate::config::DRAM_BASE + crate::config::DRAM_SIZE;
 
@@ -235,11 +262,9 @@ impl Processor {
         // startup copy code (e.g. FreeRTOS start.S) can read from there.
         let mut dram = vec![0u8; crate::config::DRAM_SIZE as usize];
         for seg in &image.segments {
-            let vma_off = (seg.vaddr - crate::config::DRAM_BASE) as usize;
-            dram[vma_off..vma_off + seg.data.len()].copy_from_slice(&seg.data);
+            copy_segment_into_dram(&mut dram, seg.vaddr, &seg.data)?;
             if seg.paddr != seg.vaddr && seg.filesz > 0 {
-                let pma_off = (seg.paddr - crate::config::DRAM_BASE) as usize;
-                dram[pma_off..pma_off + seg.filesz].copy_from_slice(&seg.data[..seg.filesz]);
+                copy_segment_into_dram(&mut dram, seg.paddr, &seg.data[..seg.filesz])?;
             }
         }
         bus.add_device(
@@ -248,7 +273,7 @@ impl Processor {
             Box::new(Ram { data: dram }),
         );
 
-        Processor {
+        Ok(Processor {
             pc: image.entry_point,
             registers,
             bus,
@@ -256,7 +281,7 @@ impl Processor {
             csrs: CsrFile::new(),
             clint_state,
             uart_output,
-        }
+        })
     }
 
     pub fn load(&mut self, text: &[u8], data: &[u8]) {

@@ -17,7 +17,7 @@ pub enum TestResult {
 pub fn run_elf(elf_bytes: &[u8], max_steps: u64) -> Result<TestResult, String> {
     let image = elf_loader::load(elf_bytes).map_err(|e| e.to_string())?;
     let tohost_addr = image.tohost_addr;
-    let mut processor = Processor::from_elf(&image);
+    let mut processor = Processor::from_elf(&image)?;
 
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
