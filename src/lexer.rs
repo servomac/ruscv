@@ -267,9 +267,11 @@ fn read_directive(
     })
 }
 
+// Skips spaces and tabs only — never `\n`, which must reach the main loop so
+// it emits Token::Newline and increments the line counter.
 fn skip_whitespace(chars: &mut std::iter::Peekable<std::str::Chars>, column: &mut usize) {
     while let Some(&c) = chars.peek() {
-        if c.is_whitespace() {
+        if c == ' ' || c == '\t' || c == '\r' {
             chars.next();
             *column += 1;
         } else {
@@ -322,7 +324,6 @@ fn read_modifier(
 
     skip_whitespace(chars, column);
     expect_char(chars, line, column, ')')?;
-    skip_whitespace(chars, column);
 
     Ok(SpannedToken {
         token: Token::Modifier(kind, symbol),
@@ -940,6 +941,23 @@ mod tests {
             tokens[0].token,
             Token::Modifier(ModifierKind::PcrelLo, "label".to_string())
         );
+    }
+
+    #[test]
+    fn test_modifier_does_not_swallow_trailing_newline() {
+        // The newline after %hi(...) must be emitted as a token, so lines after
+        // a modifier keep correct line numbers in errors and DebugInfo.
+        let tokens = tokenize("lui x1, %hi(sym)\naddi x1, x1, 0").unwrap();
+        assert!(tokens.iter().any(|t| t.token == Token::Newline));
+        let addi = tokens
+            .iter()
+            .find(|t| t.token == Token::Instruction("addi".to_string()))
+            .unwrap();
+        assert_eq!(addi.line, 2);
+
+        // An error on the line after a modifier must report line 2.
+        let err = tokenize("lui x1, %hi(sym)\n%bad(sym)").unwrap_err();
+        assert_eq!(err.line, 2);
     }
 
     #[test]
