@@ -200,4 +200,44 @@ mod tests {
         );
         assert_eq!(session.processor.registers()[A0], config::DATA_BASE);
     }
+
+    // The assembler is fed from an interactive editor: garbage input must produce
+    // a compile error, never a panic and never a multi-GB allocation.
+    #[test]
+    fn test_garbage_directive_operands_error_instead_of_panicking() {
+        let cases = [
+            ".data\n.align 32",
+            ".data\n.align -1",
+            ".data\n.align 2147483647",
+            ".data\n.align -2147483648",
+            ".text\n.align 32",
+            ".data\n.balign 0",
+            ".data\n.balign -3",
+            ".data\n.space -1",
+            ".data\n.space -2147483648",
+            ".data\n.space 2000000000",
+            ".text\n.space 2000000000",
+            ".data\n.space 67108864", // == DRAM_SIZE: exceeds the data section cap
+            ".data\n.byte 256",
+            ".data\n.half 65536",
+        ];
+        for src in cases {
+            let mut session = Session::new();
+            assert!(
+                session.load_source(src).is_err(),
+                "expected a compile error for {:?}",
+                src
+            );
+        }
+    }
+
+    #[test]
+    fn test_valid_space_and_align_still_work() {
+        let session = compile_and_run(
+            ".data\nbuf: .space 6\n.align 2\nval: .word 42\n.text\nstart: la a0, val\nlw a1, 0(a0)\n",
+            3,
+        );
+        assert_eq!(session.processor.registers()[A0], config::DATA_BASE + 8);
+        assert_eq!(session.processor.registers()[A1], 42);
+    }
 }

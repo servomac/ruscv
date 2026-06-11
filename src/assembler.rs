@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::config;
 use crate::lexer::ModifierKind;
 use crate::parser::{DirectiveKind, MemoryOffset, Operand, Section, Statement, StatementKind};
 use crate::symbols::SymbolTable;
@@ -105,39 +106,26 @@ impl Assembler {
                         DirectiveKind::Globl => {
                             continue;
                         }
-                        DirectiveKind::Align => {
-                            if let Some(Operand::Immediate(pow)) = ops.get(0) {
-                                let alignment = 2u32.pow(*pow as u32);
-                                let padding = (alignment - (addr % alignment)) % alignment;
-                                let padding_bytes = vec![0u8; padding as usize];
-                                if current_section == Section::Text {
-                                    text_bin.extend_from_slice(&padding_bytes);
-                                    current_pc += padding;
-                                } else {
-                                    data_bin.extend_from_slice(&padding_bytes);
-                                    data_pc += padding;
+                        DirectiveKind::Align | DirectiveKind::Balign => {
+                            let padding = match ops.get(0) {
+                                Some(Operand::Immediate(n)) => {
+                                    if *kind == DirectiveKind::Align {
+                                        align_padding(addr, *n)
+                                    } else {
+                                        balign_padding(addr, *n)
+                                    }
                                 }
-                            } else {
-                                errors.push(AssemblerError::new(
-                                    stmt.line,
-                                    "Directive .align requires an immediate value".to_string(),
-                                ));
-                            }
-                            continue;
-                        }
-                        DirectiveKind::Balign => {
-                            if let Some(Operand::Immediate(n)) = ops.get(0) {
-                                if *n < 1 {
-                                    errors.push(AssemblerError::new(
-                                        stmt.line,
-                                        format!(
-                                            ".balign requires a positive byte count, got {}",
-                                            n
-                                        ),
-                                    ));
-                                } else {
-                                    let alignment = *n as u32;
-                                    let padding = (alignment - (addr % alignment)) % alignment;
+                                _ => Err(format!(
+                                    "Directive .{} requires an immediate value",
+                                    if *kind == DirectiveKind::Align {
+                                        "align"
+                                    } else {
+                                        "balign"
+                                    }
+                                )),
+                            };
+                            match padding {
+                                Ok(padding) => {
                                     let padding_bytes = vec![0u8; padding as usize];
                                     if current_section == Section::Text {
                                         text_bin.extend_from_slice(&padding_bytes);
@@ -147,11 +135,9 @@ impl Assembler {
                                         data_pc += padding;
                                     }
                                 }
-                            } else {
-                                errors.push(AssemblerError::new(
-                                    stmt.line,
-                                    "Directive .balign requires an immediate value".to_string(),
-                                ));
+                                Err(msg) => {
+                                    errors.push(AssemblerError::new(stmt.line, msg));
+                                }
                             }
                             continue;
                         }
@@ -187,6 +173,46 @@ impl Assembler {
             debug_info,
         })
     }
+}
+
+// Directive math shared by pass 1 (symbols.rs sizing) and pass 2 (emission here).
+// Both passes MUST use these helpers — diverging copies of this arithmetic is how
+// label-skew bugs are born.
+
+/// Padding bytes needed to advance `addr` to the next multiple of `alignment`.
+fn alignment_padding(addr: u32, alignment: u32) -> u32 {
+    (alignment - (addr % alignment)) % alignment
+}
+
+/// Validate a `.align` exponent and return the padding needed at `addr`.
+pub fn align_padding(addr: u32, pow: i32) -> Result<u32, String> {
+    if !(0..=31).contains(&pow) {
+        return Err(format!(".align exponent {} out of range (0..=31)", pow));
+    }
+    Ok(alignment_padding(addr, 1u32 << pow))
+}
+
+/// Validate a `.balign` byte count and return the padding needed at `addr`.
+pub fn balign_padding(addr: u32, n: i32) -> Result<u32, String> {
+    if n < 1 {
+        return Err(format!(".balign requires a positive byte count, got {}", n));
+    }
+    Ok(alignment_padding(addr, n as u32))
+}
+
+/// Validate a `.space`/`.skip`/`.zero` size: non-negative and within DRAM.
+pub fn space_size(n: i32) -> Result<u32, String> {
+    if n < 0 {
+        return Err(format!(".space requires a non-negative size, got {}", n));
+    }
+    if n as u32 > config::DRAM_SIZE {
+        return Err(format!(
+            ".space size {} exceeds DRAM size ({} bytes)",
+            n,
+            config::DRAM_SIZE
+        ));
+    }
+    Ok(n as u32)
 }
 
 fn encode_instruction(
@@ -700,10 +726,8 @@ fn emit_data_bytes(kind: &DirectiveKind, ops: &[Operand]) -> Result<Vec<u8>, Str
         }
         DirectiveKind::Space => {
             if let Some(Operand::Immediate(val)) = ops.get(0) {
-                if *val < 0 {
-                    return Err(".space requires a positive value".to_string());
-                }
-                bytes.resize(bytes.len() + *val as usize, 0);
+                let size = space_size(*val)?;
+                bytes.resize(bytes.len() + size as usize, 0);
             } else {
                 return Err(".space requires an immediate value".to_string());
             }

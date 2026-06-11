@@ -1,5 +1,27 @@
+use crate::assembler::{align_padding, balign_padding, space_size};
+use crate::config;
 use crate::parser::{DirectiveKind, Operand, Section, Statement, StatementKind};
 use std::collections::HashMap;
+
+// Grow a section offset, erroring instead of overflowing. The caps match the
+// memory layout enforced by Processor::load: text lives in [TEXT_BASE, DATA_BASE)
+// and data in [DATA_BASE, DRAM_BASE + DRAM_SIZE).
+fn grow_section(section: Section, offset: u32, size: u32) -> Result<u32, String> {
+    let (cap, name) = match section {
+        Section::Text => (config::DATA_BASE - config::TEXT_BASE, "text"),
+        Section::Data => (
+            config::DRAM_SIZE - (config::DATA_BASE - config::DRAM_BASE),
+            "data",
+        ),
+    };
+    match offset.checked_add(size) {
+        Some(new_offset) if new_offset <= cap => Ok(new_offset),
+        _ => Err(format!(
+            "{} section exceeds its maximum size of {} bytes",
+            name, cap
+        )),
+    }
+}
 
 pub struct SymbolTable {
     symbols: HashMap<String, u32>,
@@ -43,7 +65,7 @@ impl SymbolTable {
 
                 StatementKind::Instruction(_, _) => {
                     if current_section == Section::Text {
-                        text_offset += 4;
+                        text_offset = grow_section(current_section, text_offset, 4)?;
                     } else {
                         return Err("Instruction found in .data section".to_string());
                     }
@@ -59,9 +81,9 @@ impl SymbolTable {
                     let size = self.calculate_directive_size(kind, operands, current_pc)?;
 
                     if current_section == Section::Text {
-                        text_offset += size;
+                        text_offset = grow_section(current_section, text_offset, size)?;
                     } else {
-                        data_offset += size;
+                        data_offset = grow_section(current_section, data_offset, size)?;
                     }
                 }
             }
@@ -79,9 +101,7 @@ impl SymbolTable {
         match kind {
             DirectiveKind::Align => {
                 if let Some(Operand::Immediate(pow)) = operands.get(0) {
-                    let alignment = 2u32.pow(*pow as u32);
-                    let aligned_pc = (current_pc + alignment - 1) & !(alignment - 1);
-                    Ok(aligned_pc - current_pc)
+                    align_padding(current_pc, *pow)
                 } else {
                     Err("Directive .align requires a power of 2 parameter".into())
                 }
@@ -113,19 +133,14 @@ impl SymbolTable {
             }
             DirectiveKind::Space => {
                 if let Some(Operand::Immediate(n)) = operands.get(0) {
-                    Ok(*n as u32)
+                    space_size(*n)
                 } else {
                     Err("Directive .space requires an immediate value".into())
                 }
             }
             DirectiveKind::Balign => {
                 if let Some(Operand::Immediate(n)) = operands.get(0) {
-                    if *n < 1 {
-                        return Ok(0);
-                    }
-                    let alignment = *n as u32;
-                    let aligned_pc = (current_pc + alignment - 1) & !(alignment - 1);
-                    Ok(aligned_pc - current_pc)
+                    balign_padding(current_pc, *n)
                 } else {
                     Err("Directive .balign requires a byte-count parameter".into())
                 }
