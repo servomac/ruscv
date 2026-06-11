@@ -185,6 +185,12 @@ mod tests {
     }
 
     #[test]
+    fn test_li_i32_min() {
+        let session = compile_and_run(".text\nstart: li a0, -2147483648\n", 2);
+        assert_eq!(session.processor.registers()[A0], 0x8000_0000);
+    }
+
+    #[test]
     fn test_explicit_pcrel_modifiers_in_source() {
         // Hand-written equivalent of la: the %pcrel_lo pairs with the auipc on the
         // previous line.

@@ -523,9 +523,11 @@ fn read_number(
     }
 
     let val = if is_negative {
-        match i32::from_str_radix(&number_str, radix) {
-            Ok(v) => -v,
-            Err(_) => {
+        // Parse the magnitude as unsigned and negate in 64 bits: the magnitude of
+        // i32::MIN (2147483648) does not fit in an i32 before negation.
+        match u32::from_str_radix(&number_str, radix) {
+            Ok(v) if v <= 1 << 31 => (-(v as i64)) as i32,
+            _ => {
                 return Err(LexError::new(
                     line,
                     start_column,
@@ -828,6 +830,27 @@ mod tests {
     fn test_negative_hex_number() {
         let tokens = tokenize("addi a0, a0, -0x10").expect("Should tokenize successfully");
         assert_eq!(tokens[5].token, Token::Immediate(-16));
+    }
+
+    #[test]
+    fn test_i32_min_literal() {
+        // The magnitude of i32::MIN does not fit in an i32 before negation.
+        let tokens = tokenize("-2147483648").expect("Should tokenize successfully");
+        assert_eq!(tokens[0].token, Token::Immediate(i32::MIN));
+
+        let tokens = tokenize("-0x80000000").expect("Should tokenize successfully");
+        assert_eq!(tokens[0].token, Token::Immediate(i32::MIN));
+
+        // One past the magnitude of i32::MIN must still overflow.
+        let res = tokenize("-2147483649");
+        assert_eq!(
+            res.unwrap_err(),
+            LexError::new(
+                1,
+                1,
+                LexErrorKind::NumericOverflow("2147483649".to_string())
+            )
+        );
     }
 
     #[test]
