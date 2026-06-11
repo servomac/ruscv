@@ -5,9 +5,9 @@ use crate::session::{CompileError, Session};
 use ratatui::crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{Terminal, backend::CrosstermBackend};
 use ratatui_textarea::{CursorMove, TextArea};
 use std::io;
 
@@ -349,11 +349,11 @@ fn format_step_error(e: &StepError) -> String {
 mod ui {
     use super::*;
     use ratatui::{
+        Frame,
         layout::{Constraint, Direction, Layout},
         style::{Color, Modifier, Style},
         text::{Line, Span},
         widgets::{Block, Borders, Paragraph},
-        Frame,
     };
 
     const ABI_NAMES: [&str; 32] = [

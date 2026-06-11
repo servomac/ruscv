@@ -102,6 +102,9 @@ impl From<MemoryFault> for StepError {
     }
 }
 
+// Hand-aligned one-line variants: one row per instruction reads like an ISA
+// listing and keeps the enum to a single screen.
+#[rustfmt::skip]
 #[derive(Debug, PartialEq)]
 enum Instruction {
     // R-type: register op register
@@ -191,15 +194,13 @@ fn register_platform_devices(
 // segment lies outside [DRAM_BASE, DRAM_BASE + DRAM_SIZE) — e.g. a foreign or
 // crafted ELF with segments below 0x8000_0000 or overhanging the DRAM end.
 fn copy_segment_into_dram(dram: &mut [u8], addr: u32, data: &[u8]) -> Result<(), String> {
-    let offset = addr
-        .checked_sub(crate::config::DRAM_BASE)
-        .ok_or_else(|| {
-            format!(
-                "ELF segment at 0x{:08x} is below DRAM base 0x{:08x}",
-                addr,
-                crate::config::DRAM_BASE
-            )
-        })? as usize;
+    let offset = addr.checked_sub(crate::config::DRAM_BASE).ok_or_else(|| {
+        format!(
+            "ELF segment at 0x{:08x} is below DRAM base 0x{:08x}",
+            addr,
+            crate::config::DRAM_BASE
+        )
+    })? as usize;
     let end = offset
         .checked_add(data.len())
         .filter(|&end| end <= dram.len())
@@ -792,11 +793,11 @@ impl Processor {
                 // by incrementing mepc before mret.
                 self.csrs.mepc = self.pc;
                 self.csrs.mcause = 11; // Environment call from M-mode
-                                       // Save MIE into MPIE, then disable interrupts (MIE = 0).
+                // Save MIE into MPIE, then disable interrupts (MIE = 0).
                 let mie = (self.csrs.mstatus >> 3) & 1;
                 self.csrs.mstatus = (self.csrs.mstatus & !(1 << 7)) | (mie << 7); // MPIE = MIE
                 self.csrs.mstatus &= !(1 << 3); // MIE  = 0
-                                                // mtvec direct mode: mask off the two mode bits before jumping.
+                // mtvec direct mode: mask off the two mode bits before jumping.
                 next_pc = self.csrs.mtvec & !3;
             }
             Instruction::Mret => {
@@ -1425,7 +1426,7 @@ mod tests {
         p.csrs.mtvec = 0x2000;
         p.csrs.mstatus = 1 << 3; // MIE = 1
         p.csrs.mie = 1 << 7; // MTIE = 1
-                             // Fire immediately: mtimecmp = 0 means mtime (which starts at 0 and becomes 1) >= 0
+        // Fire immediately: mtimecmp = 0 means mtime (which starts at 0 and becomes 1) >= 0
         p.clint_state.lock().unwrap().mtimecmp = 0;
         p.step().unwrap();
         assert_eq!(p.pc, 0x2000); // jumped to trap handler
@@ -1455,7 +1456,7 @@ mod tests {
         p.clint_state.lock().unwrap().mtimecmp = 0; // fires immediately
         p.step().unwrap();
         assert_eq!((p.csrs.mip >> 7) & 1, 1); // MTIP set
-                                              // Advance mtimecmp far into the future
+        // Advance mtimecmp far into the future
         p.clint_state.lock().unwrap().mtimecmp = u64::MAX;
         p.step().unwrap();
         assert_eq!((p.csrs.mip >> 7) & 1, 0); // MTIP cleared
@@ -1589,7 +1590,7 @@ mod tests {
         })
         .unwrap();
         assert_eq!((p.csrs.mstatus >> 3) & 1, 1); // MIE now set
-                                                  // csrci mstatus, 0x8 — CSRRCI: clear bit 3 (MIE)
+        // csrci mstatus, 0x8 — CSRRCI: clear bit 3 (MIE)
         p.execute(Instruction::Csr {
             rd: 0,
             csr_addr: 0x300,

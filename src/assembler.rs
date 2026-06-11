@@ -841,7 +841,9 @@ mod tests {
         sym_table
             .add_label("fwd".to_string(), config::TEXT_BASE + 16)
             .unwrap();
-        sym_table.add_label("back".to_string(), config::TEXT_BASE).unwrap();
+        sym_table
+            .add_label("back".to_string(), config::TEXT_BASE)
+            .unwrap();
         let statements = vec![
             Statement {
                 kind: StatementKind::Instruction(
